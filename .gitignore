@@ -1,0 +1,30 @@
+# 샘플 자료 (실제 입찰 문서 — 업로드 금지)
+Sample/
+sample/
+examples/
+
+# 생성물 (검토 산출물)
+extracted/
+*_검토메모.hwpx
+facts.json
+numeric_findings.json
+review.json
+수정요청표*.xlsx
+*.resave.hwpx
+*.trial.hwpx
+*.findings.json
+
+# 세션/도구 상태 (개인 작업 흔적 — 업로드 금지)
+.omc/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+Thumbs.db
+.DS_Store
