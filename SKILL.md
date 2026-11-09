@@ -88,7 +88,7 @@ python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json rev
 ```
 - Yellow = 수정필요, blue = 확인필요. The summary memo on the first paragraph also carries findings it cannot place and findings on other documents, with their location.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
-- `요약 메모로` lines mean the quote spans paragraphs or was not found in the HWPX: shorten it to text inside one paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
+- `요약 메모로` lines mean the quote spans paragraphs, was not found, or is in a header/footer/footnote (memos never go there; for those, `요약 메모로` is expected and final). Otherwise shorten the quote to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
 - The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos. Nothing here opens the file in 한/글 — do not claim it was checked in 한/글.
 
 ### 8. Reply (Korean, short)

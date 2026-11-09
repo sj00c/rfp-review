@@ -479,8 +479,9 @@ def annotate(a, findings, others, zin):
     every = [f for f, _ in anchored] + unanchored + others
     n_req = sum(1 for f in every if f["판정"] == "수정필요")
     n_chk = len(every) - n_req
-    head = f"고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + \
-        (f"입니다. 이 중 {len(every) - len(anchored)}건은 본문에 표시하지 못해 아래에 적었습니다." if len(every) > len(anchored) else "입니다.")
+    head = f"고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + "입니다."
+    if len(every) > len(anchored):
+        head += f" 이 중 {len(every) - len(anchored)}건은 본문 위치에 표시하지 않고 아래에 따로 적었습니다."
     summary = ["[RFP 검토 요약] AI 1차 검토 결과입니다. 최종 판단은 담당자가 합니다.", head]
     # 문서 순서대로 제목만 모아 한눈에 보이게 한다. 위치를 못 찾은 지적은 본문까지 여기 싣는다.
     ordered = [f for f, _ in sorted(anchored, key=lambda x: x[1])]
@@ -546,7 +547,11 @@ def annotate(a, findings, others, zin):
             zi.compress_type = zipfile.ZIP_STORED if info.filename == "mimetype" else info.compress_type
             zi.external_attr = info.external_attr
             zout.writestr(zi, data)
-    out = publish(buf.getvalue(), a.out)
+    try:
+        out = publish(buf.getvalue(), a.out)
+    except OSError as e:
+        print(f"[중단] 결과 파일을 저장하지 못했습니다: {a.out} ({e})")
+        return 2
 
     print(f"저장: {out}")
     print(f"메모 {len(anchored)}건 + 요약 메모 1건 (위치 못 찾음 {len(unanchored)}건, 다른 문서 {len(others)}건)")
