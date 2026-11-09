@@ -8,8 +8,8 @@
 결과적으로 한/글이 확실히 여는, 인라인을 최대한 살린 메모본을 만든다.
 
 사용법:
-  python safe_annotate.py 문서.hwpx numeric_findings.json review.json --doc 제안요청서 \
-      [--include-check] -o 결과.hwpx
+  python safe_annotate.py 문서.hwpx numeric_findings.json review.json --doc 제안요청서 -o 결과.hwpx
+  (Windows + 한/글 필요. -o는 아직 없는 새 경로)
 """
 import argparse
 import json
@@ -25,19 +25,15 @@ sys.path.insert(0, HERE)
 
 
 def load_merged(paths):
-    """annotate_hwpx.load_findings와 같은 방식으로 (id,항목) 기준 병합(뒤 파일 우선), 순서 보존."""
-    merged = {}
-    order = []
+    """모든 findings 파일을 순서대로 합친다."""
+    out = []
     for p in paths:
-        for f in json.load(open(p, encoding="utf-8")).get("findings", []):
-            key = (f.get("id"), f.get("항목"))
-            if key not in merged:
-                order.append(key)
-            merged[key] = f
-    return [merged[k] for k in order]
+        with open(p, encoding="utf-8") as fp:
+            out += json.load(fp).get("findings", [])
+    return out
 
 
-def run_annotate(hwpx, findings, doc, include_check, out):
+def run_annotate(hwpx, findings, doc, out):
     tmp = out + ".findings.json"
     log = out + ".log"
     if os.path.lexists(out) or os.path.lexists(tmp) or os.path.lexists(log):
@@ -45,8 +41,6 @@ def run_annotate(hwpx, findings, doc, include_check, out):
     with open(tmp, "x", encoding="utf-8") as fp:
         json.dump({"meta": {}, "findings": findings}, fp, ensure_ascii=False)
     cmd = [sys.executable, os.path.join(HERE, "annotate_hwpx.py"), hwpx, tmp, "--doc", doc, "-o", out]
-    if include_check:
-        cmd.append("--include-check")
     try:
         with open(log, "x", encoding="utf-8") as fp:
             try:
@@ -68,14 +62,9 @@ def _paths_alias(first, second):
     return os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second))
 
 
-def _author_actionable(finding, include_check):
-    from annotate_hwpx import finding_target
-
-    if finding_target(finding) != "작성자":
-        return False
-    verdict = finding.get("판정")
-    return verdict == "수정필요" or (
-        verdict == "확인필요" and (include_check or finding.get("질의") is True))
+def _memo_target(finding, doc):
+    """annotate_hwpx가 이 문서에 메모로 다는 지적인가."""
+    return finding.get("문서") == doc and finding.get("판정") in ("수정필요", "확인필요")
 
 
 def _publish_exclusive(source, destination):
@@ -159,15 +148,9 @@ class HwpOpener:
 
 
 def to_summary(f):
-    """인라인으로 못 단 finding을 검토 요약용으로 바꾼다. 참조 finding은 본 항목과 중복이므로 None(빼기)."""
-    if f.get("참조"):
-        return None
+    """인라인으로 못 단 finding을 검토 요약용으로 바꾼다(위치는 요약 메모에 그대로 표시된다)."""
     g = dict(f)
     g["원문"] = "해당 내용 없음"
-    loc = f.get("위치", "")
-    summ = f.get("요약") or f.get("항목", "")
-    if loc and loc not in summ:
-        g["요약"] = f"[{loc.split(']')[0].lstrip('[')}] {summ}"
     return g
 
 
@@ -176,7 +159,6 @@ def main(argv=None):
     ap.add_argument("hwpx")
     ap.add_argument("findings", nargs="+")
     ap.add_argument("--doc", required=True)
-    ap.add_argument("--include-check", action="store_true")
     ap.add_argument("-o", "--out", required=True)
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
@@ -191,22 +173,14 @@ def main(argv=None):
         return 2
 
     allf = load_merged(a.findings)
-    author_findings = [f for f in allf if _author_actionable(f, a.include_check)]
+    author_findings = [f for f in allf if _memo_target(f, a.doc)]
 
     def key(x):
-        return x.get("id"), x.get("항목")
+        return x.get("id")
 
     def build(inline_keys):
-        """inline_keys에 없는 메모 대상은 요약으로 돌린 finding 목록. 적합 등은 건수 계산용으로 그대로 둔다."""
-        out = []
-        for g in allf:
-            if not _author_actionable(g, a.include_check) or key(g) in inline_keys:
-                out.append(g)
-            else:
-                s = to_summary(g)
-                if s is not None:
-                    out.append(s)
-        return out
+        """inline_keys에 없는 메모 대상은 요약으로 돌린 finding 목록. 다른 문서의 지적은 그대로 둔다."""
+        return [g if not _memo_target(g, a.doc) or key(g) in inline_keys else to_summary(g) for g in allf]
 
     try:
         trial_dir = _private_trial_dir(output)
@@ -234,7 +208,7 @@ def main(argv=None):
         # 먼저 전체 인라인으로 한 번: 열리면 그대로 끝
         trial = next_trial()
         all_inline = build({key(f) for f in author_findings})
-        if not run_annotate(a.hwpx, all_inline, a.doc, a.include_check, trial):
+        if not run_annotate(a.hwpx, all_inline, a.doc, trial):
             # 메모 삽입 자체가 실패하면 finding별 시험도 전부 실패한다. 원인을 보려면 annotate_hwpx.py를 직접 실행한다.
             print("[safe-annotate] annotate_hwpx.py 실행 실패 — 같은 인자로 annotate_hwpx.py를 직접 실행해 오류를 확인하세요.")
             return 2
@@ -251,8 +225,8 @@ def main(argv=None):
         for f in author_findings:
             keyset = {key(x) for x in inline_keep} | {key(f)}
             trial = next_trial()
-            ok = run_annotate(a.hwpx, build(keyset), a.doc, a.include_check, trial) and opener.opens(trial)
-            label = f"{f.get('id')} {f.get('항목')}"
+            ok = run_annotate(a.hwpx, build(keyset), a.doc, trial) and opener.opens(trial)
+            label = f"{f.get('id')} {f.get('요약', '')}"
             if ok:
                 inline_keep.append(f)
                 print(f"  [인라인 OK] {label}")
@@ -262,7 +236,7 @@ def main(argv=None):
         # 최종본 생성
         final = build({key(x) for x in inline_keep})
         final_trial = next_trial()
-        okf = run_annotate(a.hwpx, final, a.doc, a.include_check, final_trial) and opener.opens(final_trial)
+        okf = run_annotate(a.hwpx, final, a.doc, final_trial) and opener.opens(final_trial)
         if okf:
             try:
                 _publish_exclusive(final_trial, output)

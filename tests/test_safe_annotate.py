@@ -36,15 +36,14 @@ class SafeAnnotateTests(unittest.TestCase):
         os.makedirs(os.path.dirname(self.output))
 
     @staticmethod
-    def finding(identifier, audience, verdict="수정필요", **extra):
+    def finding(identifier, doc="제안요청서", verdict="수정필요", **extra):
         result = {
             "id": identifier,
-            "항목": f"항목 {identifier}",
             "판정": verdict,
-            "대상": audience,
+            "문서": doc,
             "원문": "원문 내용",
             "요약": f"요약 {identifier}",
-            "조치": f"조치 {identifier}",
+            "수정안": f"수정안 {identifier}",
         }
         result.update(extra)
         return result
@@ -56,7 +55,7 @@ class SafeAnnotateTests(unittest.TestCase):
         opener.opens.side_effect = list(opens)
         calls = []
 
-        def run_annotate(_source, current_findings, _doc, _include_check, destination):
+        def run_annotate(_source, current_findings, _doc, destination):
             calls.append((destination, [dict(finding) for finding in current_findings]))
             if run is not None:
                 return run(destination, current_findings)
@@ -73,7 +72,7 @@ class SafeAnnotateTests(unittest.TestCase):
         return result, calls, opener, opener_factory, stdout.getvalue(), stderr.getvalue()
 
     def test_successful_first_trial_publishes_exclusively_and_preserves_user_sibling_trial(self):
-        findings = [self.finding("②-1", "작성자")]
+        findings = [self.finding("R1")]
         sibling_trial = self.output + ".trial.hwpx"
         with open(sibling_trial, "wb") as stream:
             stream.write(b"user sibling trial")
@@ -92,35 +91,33 @@ class SafeAnnotateTests(unittest.TestCase):
             self.assertEqual(stream.read(), b"user sibling trial")
         self.assertFalse(os.path.exists(os.path.dirname(trial_path)))
 
-    def test_fallback_uses_fresh_private_trial_per_attempt_and_preserves_other_audiences(self):
-        author_1 = self.finding("②-1", "작성자")
-        author_2 = self.finding("②-2", "작성자")
-        buyer = self.finding("②-3", "구매팀", verdict="확인필요")
-        external = self.finding("②-4", "외부확인", verdict="확인필요")
-        findings = [author_1, author_2, buyer, external]
+    def test_fallback_uses_fresh_private_trial_per_attempt_and_preserves_other_documents(self):
+        author_1 = self.finding("R1")
+        author_2 = self.finding("R2", verdict="확인필요")
+        other_doc = self.finding("R3", doc="공고문")
+        findings = [author_1, author_2, other_doc]
 
         result, calls, opener, _, _, _ = self.invoke(findings, opens=(False, False, True, True))
 
         self.assertEqual(result, 0)
-        self.assertEqual(len(calls), 4)  # all-inline, two author-only probes, final artifact
+        self.assertEqual(len(calls), 4)  # all-inline, two per-finding probes, final artifact
         trial_paths = [path for path, _ in calls]
         self.assertEqual(len(set(trial_paths)), len(trial_paths))
         self.assertEqual(opener.opens.call_count, 4)
         self.assertTrue(all(path.startswith(os.path.join(self.root, "work", ".safe-annotate-"))
                             for path in trial_paths))
 
-        # The first author's failed inline probe is summarized; buyer/external findings stay byte-for-byte alike.
+        # The failed inline probe is summarized; the passing one and other documents stay unchanged.
         final_findings = calls[-1][1]
         by_id = {finding["id"]: finding for finding in final_findings}
         self.assertEqual(by_id[author_1["id"]]["원문"], "해당 내용 없음")
         self.assertEqual(by_id[author_2["id"]], author_2)
-        self.assertEqual(by_id[buyer["id"]], buyer)
-        self.assertEqual(by_id[external["id"]], external)
+        self.assertEqual(by_id[other_doc["id"]], other_doc)
 
     def test_existing_output_is_refused_before_com_and_preserved(self):
         with open(self.output, "wb") as stream:
             stream.write(b"user output")
-        findings = [self.finding("②-1", "작성자")]
+        findings = [self.finding("R1")]
         stdout, stderr = CapturedText(), CapturedText()
         argv = [self.source, self.findings_path, "--doc", "제안요청서", "-o", self.output]
         with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -134,7 +131,7 @@ class SafeAnnotateTests(unittest.TestCase):
             self.assertEqual(stream.read(), b"user output")
 
     def test_output_created_after_precheck_is_not_clobbered_at_publish(self):
-        findings = [self.finding("②-1", "작성자")]
+        findings = [self.finding("R1")]
         stdout, stderr = CapturedText(), CapturedText()
         opener = mock.Mock()
 
@@ -181,7 +178,7 @@ class SafeAnnotateTests(unittest.TestCase):
             self.assertEqual(stream.read(), b"source document")
 
     def test_failed_attempt_preserves_private_trial_and_diagnostics(self):
-        findings = [self.finding("②-1", "작성자")]
+        findings = [self.finding("R1")]
 
         def fail_run(destination, _findings):
             with open(destination, "xb") as stream:
@@ -203,13 +200,11 @@ class SafeAnnotateTests(unittest.TestCase):
         self.assertIn(os.path.dirname(trial), stderr)
         self.assertFalse(os.path.exists(self.output))
 
-    def test_no_actionable_author_findings_keeps_internal_findings_unchanged(self):
-        buyer = self.finding("②-3", "구매팀", verdict="확인필요")
-        external = self.finding("②-4", "외부확인", verdict="확인필요")
-        result, calls, _, _, _, _ = self.invoke([buyer, external], opens=(True,))
+    def test_findings_for_other_documents_are_passed_through_unchanged(self):
+        other = self.finding("R3", doc="공고문")
+        result, calls, _, _, _, _ = self.invoke([other], opens=(True,))
         self.assertEqual(result, 0)
-        self.assertEqual(calls[0][1], [buyer, external])
-
+        self.assertEqual(calls[0][1], [other])
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@
 변환 후에는 extract_text·annotate_hwpx가 모두 같은 .hwpx를 기준으로 동작한다.
 
 전제: Windows + 한/글 설치(COM ProgID "HWPFrame.HwpObject") + pywin32.
-한/글이 없으면 2번 종료코드와 안내 메시지를 내고, 호출부는 기존 방식(HWPX 요청/엑셀)으로 되돌아간다.
+한/글이 없으면 2번 종료코드와 안내 메시지를 내고, 호출부는 사용자에게 HWPX로 저장해 달라고 요청한다.
 
 사용법:
   python convert_to_hwpx.py "제안요청서.hwp" [-o "제안요청서.hwpx"]

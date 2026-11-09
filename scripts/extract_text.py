@@ -6,8 +6,12 @@
 
 사용법:
   python extract_text.py 파일1 [파일2 ...] -o extracted/
+  python extract_text.py --check -o extracted/   # 중간 재개 전: 원본이 추출 때와 같은지 확인
+
+추출한 원본의 경로와 SHA-256은 <출력폴더>/_sources.json에 남는다.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -23,7 +27,7 @@ def clean(s):
 
 
 # ------------------------------------------------------------------ HWPX
-def from_hwpx(path, objects=None):
+def from_hwpx(path):
     out = []
     with zipfile.ZipFile(path) as z:
         secs = sorted([n for n in z.namelist() if re.match(r"Contents/section\d+\.xml$", n)],
@@ -69,16 +73,6 @@ def from_hwpx(path, objects=None):
                 elif objs:
                     # 글자 없는 문단은 번호를 매기지 않는다(annotate_hwpx와 번호를 맞춘다). 개체만 알린다.
                     out.append(f"[문단 {state['n']} 뒤{where}] {' '.join(objs)}")
-                if objs and objects is not None:
-                    location = f"[문단 {state['n']}{'' if txt else ' 뒤'}{where}]"
-                    for marker in objs:
-                        objects.append({
-                            "id": f"object-{len(objects) + 1}",
-                            "위치": location,
-                            "종류": "수식" if marker.startswith("[수식") else "그림" if marker == "[그림]" else "개체",
-                            "추출표시": marker,
-                            "증거상태": "미판독",
-                        })
             for ch in el:
                 walk(ch, cell)
 
@@ -276,15 +270,24 @@ def from_docx(path):
 # ------------------------------------------------------------------ XLSX (원가계산보고서 등)
 def from_xlsx(path):
     import openpyxl
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    values = openpyxl.load_workbook(path, data_only=True)
+    formulas = openpyxl.load_workbook(path, data_only=False)
     out = []
-    for ws in wb.worksheets:
+    for ws in values.worksheets:
+        wf = formulas[ws.title]
         for row in ws.iter_rows():
-            # read_only 모드의 빈 칸은 EmptyCell(좌표·행 번호 없음)이다. 값 있는 칸에서만 좌표를 읽는다.
-            filled = [c for c in row if c.value not in (None, "")]
-            if filled:
-                out.append(f"[{ws.title}!{filled[0].row}행] " + " | ".join(f"{c.coordinate}={c.value}" for c in filled))
-    wb.close()
+            cells = []
+            for c in row:
+                v = c.value
+                if v in (None, ""):
+                    # 계산값이 저장되지 않은 수식은 빈 칸이 아니다. 수식을 그대로 보여 준다.
+                    f = wf[c.coordinate].value
+                    if isinstance(f, str) and f.startswith("="):
+                        cells.append(f"{c.coordinate}={f}(계산값 없음)")
+                    continue
+                cells.append(f"{c.coordinate}={clean(str(v))}")
+            if cells:
+                out.append(f"[{ws.title}!{row[0].row}행] " + " | ".join(cells))
     return out
 
 
@@ -297,15 +300,52 @@ READERS = {".hwpx": from_hwpx, ".hwp": from_hwp, ".pdf": from_pdf, ".docx": from
            ".xlsx": from_xlsx, ".xlsm": from_xlsx, ".txt": from_txt, ".md": from_txt}
 
 
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fp:
+        for block in iter(lambda: fp.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def check_sources(outdir):
+    """_sources.json의 원본이 그대로인지. 바뀌었거나 없으면 1."""
+    path = os.path.join(outdir, "_sources.json")
+    if not os.path.isfile(path):
+        print(f"[재시작] {path} 없음 — 처음부터 추출하세요.")
+        return 1
+    with open(path, encoding="utf-8") as fp:
+        sources = json.load(fp)
+    stale = [s for s in sources.values()
+             if not os.path.isfile(s["원본"]) or sha256(s["원본"]) != s["sha256"]]
+    for s in stale:
+        print(f"[바뀜] {s['원본']}")
+    if stale:
+        print("[재시작] 입력이 바뀌었습니다. 이전 추출·메모·판정을 쓰지 말고 새로 검토하세요.")
+        return 1
+    print(f"[이어서] 원본 {len(sources)}개 모두 추출 때와 같습니다.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("files", nargs="+")
+    ap.add_argument("files", nargs="*")
     ap.add_argument("-o", "--outdir", default="extracted")
+    ap.add_argument("--check", action="store_true", help="원본이 추출 때와 같은지만 확인")
     a = ap.parse_args()
+    if a.check:
+        return check_sources(a.outdir)
+    if not a.files:
+        ap.error("추출할 파일을 주세요.")
     stems = [os.path.normcase(os.path.splitext(os.path.basename(f))[0]) for f in a.files]
     if len(set(stems)) != len(stems):
-        ap.error("동명 입력은 내부 작업공간에서 서로 다른 이름으로 복사한 뒤 추출하세요.")
+        ap.error("파일 이름(확장자 제외)이 같은 입력이 있습니다. 따로 추출하거나 작업 폴더에 다른 이름으로 복사하세요.")
     os.makedirs(a.outdir, exist_ok=True)
+    manifest = os.path.join(a.outdir, "_sources.json")
+    sources = {}
+    if os.path.isfile(manifest):
+        with open(manifest, encoding="utf-8") as fp:
+            sources = json.load(fp)
     ok = True
     for f in a.files:
         ext = os.path.splitext(f)[1].lower()
@@ -314,24 +354,25 @@ def main():
             ok = False
             continue
         try:
-            objects = []
-            lines = from_hwpx(f, objects) if ext == ".hwpx" else READERS[ext](f)
+            lines = READERS[ext](f)
         except Exception as e:  # noqa: BLE001
             print(f"[실패] {f}: {e}")
             ok = False
             continue
-        out = os.path.join(a.outdir, os.path.splitext(os.path.basename(f))[0] + ".txt")
+        name = os.path.splitext(os.path.basename(f))[0] + ".txt"
+        out = os.path.join(a.outdir, name)
         with open(out, "w", encoding="utf-8") as fp:
             fp.write(f"# 원본: {os.path.basename(f)}\n" + "\n".join(lines) + "\n")
-        with open(os.path.splitext(out)[0] + ".objects.json", "w", encoding="utf-8") as fp:
-            json.dump({"원본": os.path.basename(f), "개체목록": objects,
-                       "개체조사": "완료" if ext == ".hwpx" else "미지원",
-                       "주의": "수식 문자열 추출은 판독·적용 기준 확인을 대신하지 않습니다."},
-                      fp, ensure_ascii=False, indent=2)
+        sources[name] = {"원본": os.path.abspath(f), "sha256": sha256(f)}
         chars = sum(len(ln) for ln in lines)
         pages = len({ln.split("]")[0] for ln in lines})
         warn = "  ※ 텍스트가 거의 없음: 스캔 PDF일 수 있습니다." if (ext == ".pdf" and chars < 200 * max(1, pages)) else ""
+        if not lines:
+            warn += "  ※ 읽은 내용이 없습니다. 빈 문서로 보고 검토하지 마세요."
+            ok = False
         print(f"[완료] {f} → {out} ({len(lines)}줄, {chars:,}자){warn}")
+    with open(manifest, "w", encoding="utf-8") as fp:
+        json.dump(sources, fp, ensure_ascii=False, indent=2)
     return 0 if ok else 1
 
 
