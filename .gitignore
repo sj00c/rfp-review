@@ -4,22 +4,34 @@ sample/
 examples/
 
 # 생성물 (검토 산출물)
+output/
 extracted/
 *_검토메모.hwpx
 facts.json
 numeric_findings.json
 review.json
+review_*.json
+review_notes.md
+items/
+validate_report.txt
 수정요청표*.xlsx
 *.resave.hwpx
 *.trial.hwpx
 *.findings.json
+*_검토회신.txt
+
+# 구매팀에서 받은 실제 검토 자료
+RE_ RE_ *.zip
 
 # 세션/도구 상태 (개인 작업 흔적 — 업로드 금지)
 .omc/
 .claude/
+.codex/
+.gjc/
 
 # Python
 __pycache__/
+.ruff_cache/
 *.pyc
 *.pyo
 .venv/

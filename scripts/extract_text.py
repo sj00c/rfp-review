@@ -8,6 +8,7 @@
   python extract_text.py 파일1 [파일2 ...] -o extracted/
 """
 import argparse
+import json
 import os
 import re
 import struct
@@ -22,28 +23,67 @@ def clean(s):
 
 
 # ------------------------------------------------------------------ HWPX
-def from_hwpx(path):
+def from_hwpx(path, objects=None):
     out = []
     with zipfile.ZipFile(path) as z:
         secs = sorted([n for n in z.namelist() if re.match(r"Contents/section\d+\.xml$", n)],
                       key=lambda n: int(re.findall(r"\d+", n)[-1]))
-        n = 0
+        state = {"n": 0, "tbl": 0}
+
+        def walk(el, cell):
+            tag = el.tag.rsplit("}", 1)[-1]
+            if tag == "tbl":
+                state["tbl"] += 1
+                tno = state["tbl"]
+                for ch in el:
+                    walk(ch, (tno, None))
+                return
+            if tag == "tc" and cell:
+                addr = next((c for c in el if c.tag.endswith("}cellAddr")), None)
+                rc = (int(addr.get("rowAddr", 0)) + 1, int(addr.get("colAddr", 0)) + 1) if addr is not None else None
+                for ch in el:
+                    walk(ch, (cell[0], rc))
+                return
+            if tag == "p":
+                # 직계 run 안의 텍스트만 모아 중첩 표 문단이 중복되지 않게 한다
+                parts, objs = [], []
+                for run in el:
+                    if not run.tag.endswith("}run"):
+                        continue
+                    for t in run:
+                        kind = t.tag.rsplit("}", 1)[-1]
+                        if kind == "t":
+                            parts.append("".join(t.itertext()))
+                        elif kind == "equation":
+                            # 수식은 본문 글자가 아니라 개체다. 빼면 평점산식 등이 '공란'으로 보여 허위 지적이 나온다.
+                            sc = next((x for x in t if x.tag.endswith("}script")), None)
+                            objs.append(f"[수식: {clean(sc.text or '')}]" if sc is not None else "[수식]")
+                        elif kind in ("pic", "ole"):
+                            objs.append("[그림]" if kind == "pic" else "[개체]")
+                txt = clean("".join(parts))
+                where = f" 표{cell[0]} {cell[1][0]}-{cell[1][1]}" if cell and cell[1] else ""
+                if txt:
+                    state["n"] += 1
+                    # 표 안 문단에는 표 번호와 행-열을 붙인다. 없으면 모델이 배점·등급을 다른 항목에 잘못 붙인다.
+                    out.append(f"[문단 {state['n']}{where}] {' '.join([txt] + objs)}")
+                elif objs:
+                    # 글자 없는 문단은 번호를 매기지 않는다(annotate_hwpx와 번호를 맞춘다). 개체만 알린다.
+                    out.append(f"[문단 {state['n']} 뒤{where}] {' '.join(objs)}")
+                if objs and objects is not None:
+                    location = f"[문단 {state['n']}{'' if txt else ' 뒤'}{where}]"
+                    for marker in objs:
+                        objects.append({
+                            "id": f"object-{len(objects) + 1}",
+                            "위치": location,
+                            "종류": "수식" if marker.startswith("[수식") else "그림" if marker == "[그림]" else "개체",
+                            "추출표시": marker,
+                            "증거상태": "미판독",
+                        })
+            for ch in el:
+                walk(ch, cell)
+
         for s in secs:
-            root = ET.fromstring(z.read(s))
-            for el in root.iter():
-                if el.tag.endswith("}p"):
-                    # 직계 run 안의 텍스트만 모아 중첩 표 문단이 중복되지 않게 한다
-                    parts = []
-                    for run in el:
-                        if not run.tag.endswith("}run"):
-                            continue
-                        for t in run:
-                            if t.tag.endswith("}t"):
-                                parts.append("".join(t.itertext()))
-                    txt = clean("".join(parts))
-                    if txt:
-                        n += 1
-                        out.append(f"[문단 {n}] {txt}")
+            walk(ET.fromstring(z.read(s)), None)
     return out
 
 
@@ -153,6 +193,15 @@ def from_hwp(path):
                 i += 4
             rec = data[i:i + size]
             i += size
+            if tag == 88 and len(rec) >= 6:  # HWPTAG_EQEDIT: 수식 스크립트. 직전 문단에 붙인다(빼면 '공란'으로 보인다)
+                ln = struct.unpack("<H", rec[4:6])[0]
+                script = clean(rec[6:6 + ln * 2].decode("utf-16-le", "ignore"))
+                mark = f"[수식: {script}]"
+                if out:
+                    out[-1] += " " + mark
+                else:
+                    out.append(f"[문단 0 뒤] {mark}")
+                continue
             if tag != 67:  # HWPTAG_PARA_TEXT
                 continue
             chars, j = [], 0
@@ -160,6 +209,8 @@ def from_hwp(path):
                 c = struct.unpack("<H", rec[j:j + 2])[0]
                 if c < 32:
                     if c in (0, 10, 13, 24, 25, 26, 27, 28, 29, 30, 31):
+                        if c in (10, 30, 31):  # 줄바꿈·묶음빈칸·고정폭빈칸: 버리면 양쪽 단어가 붙는다
+                            chars.append(" ")
                         j += 2
                     else:  # 인라인/확장 컨트롤: 8 wchar
                         if c == 9:
@@ -229,15 +280,17 @@ def from_xlsx(path):
     out = []
     for ws in wb.worksheets:
         for row in ws.iter_rows():
-            cells = [f"{c.coordinate}={c.value}" for c in row if c.value not in (None, "")]
-            if cells:
-                out.append(f"[{ws.title}!{row[0].row}행] " + " | ".join(cells))
+            # read_only 모드의 빈 칸은 EmptyCell(좌표·행 번호 없음)이다. 값 있는 칸에서만 좌표를 읽는다.
+            filled = [c for c in row if c.value not in (None, "")]
+            if filled:
+                out.append(f"[{ws.title}!{filled[0].row}행] " + " | ".join(f"{c.coordinate}={c.value}" for c in filled))
+    wb.close()
     return out
 
 
 def from_txt(path):
     with open(path, encoding="utf-8", errors="replace") as fp:
-        return [f"[줄 {i}] {clean(l)}" for i, l in enumerate(fp, 1) if clean(l)]
+        return [f"[줄 {i}] {clean(ln)}" for i, ln in enumerate(fp, 1) if clean(ln)]
 
 
 READERS = {".hwpx": from_hwpx, ".hwp": from_hwp, ".pdf": from_pdf, ".docx": from_docx,
@@ -249,6 +302,9 @@ def main():
     ap.add_argument("files", nargs="+")
     ap.add_argument("-o", "--outdir", default="extracted")
     a = ap.parse_args()
+    stems = [os.path.normcase(os.path.splitext(os.path.basename(f))[0]) for f in a.files]
+    if len(set(stems)) != len(stems):
+        ap.error("동명 입력은 내부 작업공간에서 서로 다른 이름으로 복사한 뒤 추출하세요.")
     os.makedirs(a.outdir, exist_ok=True)
     ok = True
     for f in a.files:
@@ -258,7 +314,8 @@ def main():
             ok = False
             continue
         try:
-            lines = READERS[ext](f)
+            objects = []
+            lines = from_hwpx(f, objects) if ext == ".hwpx" else READERS[ext](f)
         except Exception as e:  # noqa: BLE001
             print(f"[실패] {f}: {e}")
             ok = False
@@ -266,12 +323,20 @@ def main():
         out = os.path.join(a.outdir, os.path.splitext(os.path.basename(f))[0] + ".txt")
         with open(out, "w", encoding="utf-8") as fp:
             fp.write(f"# 원본: {os.path.basename(f)}\n" + "\n".join(lines) + "\n")
-        chars = sum(len(l) for l in lines)
-        warn = "  ※ 텍스트가 거의 없음: 스캔 PDF일 수 있습니다." if (ext == ".pdf" and chars < 200 * max(1, len({l.split("]")[0] for l in lines}))) else ""
+        with open(os.path.splitext(out)[0] + ".objects.json", "w", encoding="utf-8") as fp:
+            json.dump({"원본": os.path.basename(f), "개체목록": objects,
+                       "개체조사": "완료" if ext == ".hwpx" else "미지원",
+                       "주의": "수식 문자열 추출은 판독·적용 기준 확인을 대신하지 않습니다."},
+                      fp, ensure_ascii=False, indent=2)
+        chars = sum(len(ln) for ln in lines)
+        pages = len({ln.split("]")[0] for ln in lines})
+        warn = "  ※ 텍스트가 거의 없음: 스캔 PDF일 수 있습니다." if (ext == ".pdf" and chars < 200 * max(1, pages)) else ""
         print(f"[완료] {f} → {out} ({len(lines)}줄, {chars:,}자){warn}")
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")  # 하네스가 파이프로 읽어도 UTF-8로 나가게
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())
 

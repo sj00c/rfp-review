@@ -15,7 +15,7 @@ import sys
 
 # convert_to_hwpx의 보안모듈 등록 재사용
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from convert_to_hwpx import _ensure_security_module
+from convert_to_hwpx import _create_hwp_instance, _ensure_security_module
 
 
 def resave(src, dst=None):
@@ -38,10 +38,7 @@ def resave(src, dst=None):
     pythoncom.CoInitialize()
     hwp = None
     try:
-        try:
-            hwp = win32.gencache.EnsureDispatch("HWPFrame.HwpObject")
-        except Exception:
-            hwp = win32.Dispatch("HWPFrame.HwpObject")
+        hwp = _create_hwp_instance(win32)
         try:
             hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
         except Exception:
@@ -52,7 +49,8 @@ def resave(src, dst=None):
             pass
         if not hwp.Open(src, "HWPX", "forceopen:true"):
             raise RuntimeError("한/글이 메모본을 열지 못했습니다.")
-        hwp.SaveAs(tmp, "HWPX", "")
+        if not hwp.SaveAs(tmp, "HWPX", ""):
+            raise RuntimeError(f"한/글이 메모본 재저장에 실패했습니다: {tmp}")
         try:
             hwp.Clear(1)
         except Exception:

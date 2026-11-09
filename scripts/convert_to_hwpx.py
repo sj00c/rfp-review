@@ -47,6 +47,14 @@ def _ensure_security_module():
     return dll
 
 
+def _create_hwp_instance(win32):
+    """Start a dedicated Hancom process; never attach to a user's running instance."""
+    try:
+        return win32.DispatchEx("HWPFrame.HwpObject")
+    except Exception as exc:
+        raise RuntimeError(f"한/글 독립 인스턴스를 시작하지 못했습니다: {exc}") from exc
+
+
 def convert_hwp_to_hwpx(src, dst=None):
     """src(.hwp)를 dst(.hwpx)로 변환하고 dst 경로를 반환한다. 실패 시 RuntimeError."""
     src = os.path.abspath(src)
@@ -55,6 +63,9 @@ def convert_hwp_to_hwpx(src, dst=None):
     if dst is None:
         dst = os.path.splitext(src)[0] + ".hwpx"
     dst = os.path.abspath(dst)
+    if os.path.lexists(dst):
+        # 기존 HWPX는 사용자가 따로 만든 판본일 수 있다. mtime으로 재사용 여부를 추측하지 않는다.
+        raise RuntimeError(f"출력 파일이 이미 있습니다: {dst} — -o로 다른 이름을 지정하세요.")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
 
     try:
@@ -69,10 +80,7 @@ def convert_hwp_to_hwpx(src, dst=None):
     pythoncom.CoInitialize()
     hwp = None
     try:
-        try:
-            hwp = win32.gencache.EnsureDispatch("HWPFrame.HwpObject")
-        except Exception:
-            hwp = win32.Dispatch("HWPFrame.HwpObject")
+        hwp = _create_hwp_instance(win32)
         # 파일 접근 보안 대화상자 억제(위에서 등록한 승인 모듈 사용)
         try:
             hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
@@ -84,7 +92,8 @@ def convert_hwp_to_hwpx(src, dst=None):
             pass
         if not hwp.Open(src, "HWP", "forceopen:true"):
             raise RuntimeError("한/글이 원본을 열지 못했습니다(암호·손상·배포용 문서일 수 있음).")
-        hwp.SaveAs(dst, "HWPX", "")
+        if not hwp.SaveAs(dst, "HWPX", ""):
+            raise RuntimeError(f"한/글이 변환 결과 저장에 실패했습니다: {dst}")
         try:
             hwp.Clear(1)
         except Exception:
@@ -121,4 +130,6 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")  # 하네스가 파이프로 읽어도 UTF-8로 나가게
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())

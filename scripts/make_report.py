@@ -37,11 +37,40 @@ GRN_FILL = PatternFill("solid", fgColor="E8F3E8")
 
 SEV = {"★필수": 0, "확인": 1, "참고": 2}
 SHEET_ORDER = "①②③④⑤⑥"
+_CHECKLIST_ITEMS = None
 
 
 def id_key(i):
     m = re.match(r"([①②③④⑤⑥])-(\d+)", i or "")
     return (SHEET_ORDER.index(m.group(1)), int(m.group(2))) if m else (9, 999)
+
+
+def finding_target(f):
+    """대상 기본값은 output-format 계약을 따른다. 확인필요는 추정하지 않는다."""
+    if "대상" in f:
+        return f.get("대상")
+    if f.get("판정") != "수정필요":
+        return None
+    return checklist_item(f.get("id")).get("대상", "작성자")
+
+
+def checklist_item(id_):
+    global _CHECKLIST_ITEMS
+    if _CHECKLIST_ITEMS is None:
+        from checklist_items import parse
+        _CHECKLIST_ITEMS = {item["id"]: item for item in parse()}
+    return _CHECKLIST_ITEMS.get(id_, {})
+
+
+def finding_value(f, key):
+    if key in f:
+        return f.get(key)
+    return checklist_item(f.get("id")).get(key)
+
+
+def display_type(f):
+    value = finding_value(f, "기준유형")
+    return " / ".join(value) if isinstance(value, list) else value
 
 
 def load(paths):
@@ -51,8 +80,18 @@ def load(paths):
             d = json.load(fp)
         meta.update(d.get("meta") or {})
         for f in d.get("findings", []):
-            merged[(f.get("id"), f.get("항목"))] = f
-    rows = sorted(merged.values(), key=lambda f: (SEV.get(f.get("중요도"), 3), id_key(f.get("id"))))
+            merged[(f.get("id"), f.get("항목"))] = dict(f)
+    # 참조 finding은 같은 지적의 추가 위치다. 표에서는 본 항목 '위치'에 합치고 행으로 세지 않는다
+    # (한글 메모의 '수정 요청 n건'과 건수를 맞춘다).
+    mains = [f for f in merged.values() if not f.get("참조")]
+    for r in [f for f in merged.values() if f.get("참조")]:
+        target = next((m for m in mains if m.get("id") == r.get("id") and m.get("판정") == r.get("판정")), None)
+        where = " ".join(x for x in [r.get("문서", ""), r.get("위치", "")] if x)
+        if target is None:
+            mains.append(r)  # 본 항목이 없으면 지우지 않고 그대로 둔다
+        elif where:
+            target["위치"] = (target.get("위치") or "") + f"\n(같은 지적: {where})"
+    rows = sorted(mains, key=lambda f: (SEV.get(f.get("중요도"), 3), id_key(f.get("id"))))
     return meta, rows
 
 
@@ -64,6 +103,9 @@ def table(ws, start_row, headers, widths, rows, center_cols=()):
     for r, vals in enumerate(rows, start_row + 1):
         for c, v in enumerate(vals, 1):
             cell = ws.cell(r, c, v)
+            if isinstance(v, str):
+                # 원문·수정안은 데이터다. '=...' 문구를 Excel 수식으로 실행하지 않는다.
+                cell.data_type = "s"
             cell.font, cell.border = BODY, BOX
             cell.alignment = CENTER if c in center_cols else WRAP
     end = start_row + max(len(rows), 1)
@@ -93,14 +135,18 @@ def main():
     ws["A2"] = (f"검토일 {meta.get('검토일', date.today().isoformat())} · 검토 {meta.get('검토자', '구매팀')} · "
                 f"낙찰방식 {meta.get('낙찰방식', '-')} · 계약유형 {meta.get('계약유형', '-')}")
     ws["A2"].font = BODY
-    ws["A3"] = "아래 항목을 수정한 뒤 '작성자 조치'와 '작성자 의견'을 채워 회신해 주세요. ★필수 항목은 법령·계약예규상 필수 사항입니다."
+    ws["A3"] = "아래 항목을 수정한 뒤 '작성자 조치'와 '작성자 의견'을 채워 회신해 주세요. ★필수 표시는 검토 우선순위이며 법령상 필수 여부를 단독으로 뜻하지 않습니다."
     ws["A3"].font = BODY
-    req = [f for f in rows if f.get("판정") == "수정필요"]
-    H = ["No", "점검ID", "중요도", "점검항목", "문서", "위치", "현재 문구", "문제점", "근거", "수정안", "작성자 조치", "작성자 의견"]
-    W = [5, 9, 8, 20, 12, 16, 36, 36, 26, 40, 13, 24]
+    req = [f for f in rows if f.get("판정") == "수정필요" and finding_target(f) == "작성자"
+           and not f.get("참조")]
+    H = ["No", "점검ID", "중요도", "점검항목", "문서", "위치", "현재 문구", "문제점", "근거", "수정안",
+         "작성자 조치", "작성자 의견", "대상", "기준유형", "적용성", "증거상태"]
+    W = [5, 9, 8, 20, 12, 16, 36, 36, 26, 40, 13, 24, 10, 18, 22, 16]
     data = [[i, f.get("id"), f.get("중요도"), f.get("항목"), f.get("문서"), f.get("위치"), f.get("원문"),
              f.get("문제점"), f.get("근거") + (f"\n(연계 {f['연계']})" if f.get("연계") else "") if f.get("근거") else f.get("연계", ""),
-             f.get("수정안"), "", ""] for i, f in enumerate(req, 1)]
+             f.get("수정안"), "", "", finding_target(f), display_type(f), finding_value(f, "적용성"),
+             finding_value(f, "증거상태")]
+            for i, f in enumerate(req, 1)]
     end = table(ws, 5, H, W, data, center_cols=(1, 2, 3, 11))
     dv = DataValidation(type="list", formula1='"반영,미반영(사유 기재),협의 요청"', allow_blank=True)
     ws.add_data_validation(dv)
@@ -111,26 +157,49 @@ def main():
     ws2 = wb.create_sheet("확인필요")
     ws2["A1"] = "문서만으로 판정할 수 없는 항목 — 담당자 확인 필요"
     ws2["A1"].font = TITLE
-    chk = [f for f in rows if f.get("판정") == "확인필요"]
+    chk = [f for f in rows if f.get("판정") == "확인필요"
+           and finding_target(f) not in {"구매팀", "외부확인"} and not f.get("참조")]
     H2 = ["No", "점검ID", "중요도", "점검항목", "확인할 내용", "관련 문서·위치", "근거", "확인 주체", "확인 결과", "확인일/비고"]
     W2 = [5, 9, 8, 22, 50, 22, 28, 12, 11, 20]
     data2 = [[i, f.get("id"), f.get("중요도"), f.get("항목"), f.get("문제점"),
               " ".join(x for x in [f.get("문서", ""), f.get("위치", "")] if x), f.get("근거"),
-              f.get("확인주체", "구매팀"), "", ""] for i, f in enumerate(chk, 1)]
+              f.get("확인주체", finding_target(f)), "", ""] for i, f in enumerate(chk, 1)]
     end2 = table(ws2, 3, H2, W2, data2, center_cols=(1, 2, 3, 8, 9))
     dv2 = DataValidation(type="list", formula1='"완료,미확인,해당없음"', allow_blank=True)
     ws2.add_data_validation(dv2)
     dv2.add(f"I4:I{max(end2, 4)}")
     sev_format(ws2, "C", 4, max(end2, 4), len(H2))
 
-    # ---------------------------------------------------------------- 3. 전체 점검결과
+    # ---------------------------------------------------------------- 3. 구매팀·외부 조치 (작성자 수정요청과 분리)
+    buyer_actions = [f for f in rows
+                     if finding_target(f) in {"구매팀", "외부확인"}
+                     and f.get("판정") in {"수정필요", "확인필요"}
+                     and not f.get("참조")]
+    ws_actions = wb.create_sheet("구매팀·외부 조치")
+    ws_actions["A1"] = "구매팀·외부 확인 및 조치 — 작성자 수정요청과 분리"
+    ws_actions["A1"].font = TITLE
+    action_headers = ["No", "대상", "점검ID", "판정", "중요도", "점검항목", "문서", "위치", "현재 문구",
+                      "문제점", "조치", "수정안", "기준유형", "적용성", "증거상태", "근거", "담당 주체"]
+    action_widths = [5, 10, 9, 10, 8, 22, 15, 24, 32, 38, 32, 38, 18, 22, 16, 28, 14]
+    action_data = [[i, finding_target(f), f.get("id"), f.get("판정"), f.get("중요도"), f.get("항목"),
+                    f.get("문서"), f.get("위치"), f.get("원문"), f.get("문제점"), f.get("조치"),
+                    f.get("수정안"), display_type(f), finding_value(f, "적용성"),
+                    finding_value(f, "증거상태"), f.get("근거"),
+                    f.get("확인주체", finding_target(f))]
+                   for i, f in enumerate(buyer_actions, 1)]
+    table(ws_actions, 3, action_headers, action_widths, action_data, center_cols=(1, 2, 3, 4, 5, 17))
+
+    # ---------------------------------------------------------------- 4. 전체 점검결과
     ws3 = wb.create_sheet("전체결과")
     ws3["A1"] = "전체 점검결과 (판정을 바꾸면 요약이 다시 계산됩니다)"
     ws3["A1"].font = TITLE
-    H3 = ["점검ID", "중요도", "점검항목", "판정", "판정방식", "문서", "위치", "원문", "문제점·판단 근거", "근거", "수정안", "연계"]
-    W3 = [9, 8, 22, 10, 9, 12, 16, 34, 40, 26, 34, 12]
+    H3 = ["점검ID", "중요도", "점검항목", "판정", "판정방식", "문서", "위치", "원문", "문제점·판단 근거", "근거", "수정안", "연계",
+          "대상", "기준유형", "적용성", "증거상태", "참조"]
+    W3 = [9, 8, 22, 10, 9, 12, 16, 34, 40, 26, 34, 12, 10, 18, 22, 16, 8]
     data3 = [[f.get("id"), f.get("중요도"), f.get("항목"), f.get("판정"), f.get("판정방식"), f.get("문서"), f.get("위치"),
-              f.get("원문"), f.get("문제점"), f.get("근거"), f.get("수정안"), f.get("연계")] for f in rows]
+              f.get("원문"), f.get("문제점"), f.get("근거"), f.get("수정안"), f.get("연계"), finding_target(f),
+              display_type(f), finding_value(f, "적용성"), finding_value(f, "증거상태"), bool(f.get("참조"))]
+             for f in rows]
     end3 = table(ws3, 3, H3, W3, data3, center_cols=(1, 2, 4, 5))
     dv3 = DataValidation(type="list", formula1='"수정필요,확인필요,적합,해당없음"', allow_blank=False)
     ws3.add_data_validation(dv3)
@@ -139,12 +208,12 @@ def main():
     for txt, fill in [("수정필요", RED_FILL), ("확인필요", YEL_FILL), ("적합", GRN_FILL)]:
         ws3.conditional_formatting.add(f"D4:D{last3}", FormulaRule(formula=[f'$D4="{txt}"'], fill=fill))
 
-    # ---------------------------------------------------------------- 4. 요약 (맨 앞으로)
+    # ---------------------------------------------------------------- 5. 요약 (맨 앞으로)
     ws0 = wb.create_sheet("요약", 0)
     ws0.column_dimensions["A"].width = 16
     for col in "BCDE":
         ws0.column_dimensions[col].width = 12
-    ws0["A1"] = "제안요청서·공고문 검토 요약"
+    ws0["A1"] = "[입찰서류 검토 요약]"
     ws0["A1"].font = TITLE
     info = [("사업명", meta.get("사업명", "")), ("검토일", meta.get("검토일", date.today().isoformat())),
             ("검토자", meta.get("검토자", "구매팀")), ("검토 문서", ", ".join(meta.get("검토문서", []))),
@@ -163,11 +232,12 @@ def main():
         cell = ws0.cell(r0, c, h)
         cell.font, cell.fill, cell.border, cell.alignment = HDR, HDR_FILL, BOX, CENTER
     rng_d, rng_b = f"전체결과!$D$4:$D${last3}", f"전체결과!$B$4:$B${last3}"
+    rng_ref = f"전체결과!$Q$4:$Q${last3}"
     for i, v in enumerate(["수정필요", "확인필요", "적합", "해당없음"], 1):
         r = r0 + i
         ws0.cell(r, 1, v)
         for c, s in enumerate(["★필수", "확인", "참고"], 2):
-            ws0.cell(r, c, f'=COUNTIFS({rng_d},$A{r},{rng_b},"{s}")')
+            ws0.cell(r, c, f'=COUNTIFS({rng_d},$A{r},{rng_b},"{s}",{rng_ref},FALSE)')
         ws0.cell(r, 5, f"=SUM(B{r}:D{r})")
         for c in range(1, 6):
             ws0.cell(r, c).font, ws0.cell(r, c).border = (BOLD if c in (1, 5) else BODY), BOX
@@ -193,12 +263,24 @@ def main():
         w.page_setup.fitToWidth = 1
         w.page_setup.fitToHeight = 0
         w.sheet_properties.pageSetUpPr.fitToPage = True
-    wb.save(a.out)
+    try:
+        with open(a.out, "xb") as out_fp:
+            wb.save(out_fp)
+    except FileExistsError:
+        print(f"[중단] 출력 파일이 이미 있습니다: {a.out}")
+        return 2
+    except OSError as e:
+        print(f"[중단] 출력 파일을 만들지 못했습니다: {e}")
+        return 2
     cnt = {}
-    for f in rows:
+    counted_rows = [f for f in rows if not f.get("참조")]
+    for f in counted_rows:
         cnt[f.get("판정")] = cnt.get(f.get("판정"), 0) + 1
-    print(f"저장: {a.out}  (수정요청 {len(req)}건, 확인필요 {len(chk)}건, 전체 {len(rows)}건: {cnt})")
+    print(f"저장: {a.out}  (수정요청 {len(req)}건, 확인필요 합계 {cnt.get('확인필요', 0)}건, "
+          f"구매팀·외부 조치 {len(buyer_actions)}건, 전체 {len(counted_rows)}건: {cnt})")
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")  # 하네스가 파이프로 읽어도 UTF-8로 나가게
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())

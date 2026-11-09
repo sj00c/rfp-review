@@ -2,7 +2,7 @@
 """검토 결과를 원본 HWPX 문서에 한글 '메모'와 형광펜으로 단다.
 
 - 지적한 원문 위치에 형광펜을 칠하고, 그 범위에 메모(점검ID·문제·수정안·근거)를 단다.
-- 위치를 못 찾은 지적과 전체 요약은 문서 첫 문단에 '검토 요약' 메모로 단다.
+- 위치를 못 찾은 지적과 전체 요약은 문서 첫 문단에 요약 메모로 단다.
 - 원본 파일은 건드리지 않고 새 파일로 저장한다. 메모가 달린 문단 외에는 그대로 둔다.
 
 메모 구조는 한/글이 저장한 파일과 같다: 본문 run 안의
@@ -13,13 +13,15 @@
 
 사용법:
   python annotate_hwpx.py 제안요청서.hwpx --doc 제안요청서 numeric_findings.json review.json -o 제안요청서_검토메모.hwpx
-  옵션: --include-check  확인필요 항목도 메모로 단다(기본: 수정필요만)
+  옵션: --include-check  작성자 대상 확인필요도 모두 메모로 단다
         --author 구매팀   메모 작성자
 """
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 import zipfile
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
@@ -29,11 +31,33 @@ HP = "{%s}" % HP_NS
 MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 623209829, 한/글이 메모 필드에 쓰는 값
 COLOR = {"수정필요": "#FFFF00", "확인필요": "#9FE2FF"}
 SEV = {"★필수": 0, "확인": 1, "참고": 2}
+MEMO_SEP = "─" * 16  # 한 메모에 합친 지적 사이 구분선
 WS = re.compile(r"\s+")
 
 
 def local(tag):
     return tag.rsplit("}", 1)[-1]
+
+
+def paths_alias(first, second):
+    """Existing hard-link/symlink aliases and normalized path aliases are unsafe outputs."""
+    try:
+        if os.path.exists(first) and os.path.exists(second) and os.path.samefile(first, second):
+            return True
+    except OSError:
+        pass
+    return os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second))
+
+
+_CHECKLIST_ITEMS = None
+
+
+def checklist_item(id_):
+    global _CHECKLIST_ITEMS
+    if _CHECKLIST_ITEMS is None:
+        from checklist_items import parse
+        _CHECKLIST_ITEMS = {item["id"]: item for item in parse()}
+    return _CHECKLIST_ITEMS.get(id_, {})
 
 
 # ------------------------------------------------------------------ 입력
@@ -44,10 +68,32 @@ def load_findings(paths, include_check):
             d = json.load(fp)
         for f in d.get("findings", []):
             merged[(f.get("id"), f.get("항목"))] = f
-    keep = {"수정필요"} | ({"확인필요"} if include_check else set())
-    out = [f for f in merged.values() if f.get("판정") in keep]
+    # 메모는 작성자 대상 지적만 싣는다. 확인필요는 대상이 명시된 경우에만 작성자 질의가 된다.
+    def keep(f):
+        v = f.get("판정")
+        target = finding_target(f)
+        return target == "작성자" and (v == "수정필요" or
+                                       (v == "확인필요" and (include_check or f.get("질의") is True)))
+    out = [f for f in merged.values() if keep(f)]
     out.sort(key=lambda f: (SEV.get(f.get("중요도"), 3), f.get("id", "")))
     return out, list(merged.values())
+
+
+def finding_target(f):
+    """대상 기본값은 output-format 계약을 따른다. 확인필요는 추정하지 않는다."""
+    if "대상" in f:
+        return f.get("대상")
+    if f.get("판정") != "수정필요":
+        return None
+    return checklist_item(f.get("id")).get("대상", "작성자")
+
+
+KNOWN_DOCS = {"공고문", "제안요청서", "원가계산보고서", "과업내용서", "용역계약의뢰서", "기관운영자료", "기타"}
+
+
+def finding_docs(f):
+    """finding의 '문서' 값을 문서명 목록으로. 빈 목록이면 문서를 특정하지 않은 finding이다."""
+    return [x.strip() for x in re.split(r"[,/]", f.get("문서") or "") if x.strip()]
 
 
 def quote_for_doc(f, doc):
@@ -55,21 +101,35 @@ def quote_for_doc(f, doc):
     raw = (f.get("원문") or "").strip()
     if not raw or raw.startswith("해당 내용 없음"):
         return None
-    tagged = re.findall(r"^\[([^\]]+)\]\s*(.+)$", raw, re.M)
+    docs = finding_docs(f)
+    names = KNOWN_DOCS | set(docs)
+    # '[공고문] …' 형태는 문서별 원문이다. '[별표] …', '[ ] …' 같은 본문 괄호는 태그가 아니다.
+    tagged = [(d.strip(), q) for d, q in re.findall(r"^\[([^\]]+)\]\s*(.+)$", raw, re.M) if d.strip() in names]
     if tagged:
         for d, q in tagged:
-            if d.strip() == doc:
+            if d == doc:
                 return q.strip()
         return None
-    docs = [x.strip() for x in re.split(r"[,/]", f.get("문서") or "") if x.strip()]
     if docs and doc not in docs:
         return None
     return raw
 
 
-def para_hint(f):
-    """위치에서 [문단 n] 번호를 모두 뽑는다."""
-    return [int(n) for n in re.findall(r"문단\s*(\d+)", f.get("위치") or "")]
+def para_hint(f, doc):
+    """위치에서 이 문서의 [문단 n] 번호를 뽑는다.
+
+    check_numbers는 '공고문: [문단 3] / 제안요청서: [문단 4]'처럼 문서별 위치를 한 줄에 쓴다.
+    다른 문서의 문단 번호를 쓰면 엉뚱한 문단에 메모가 달린다."""
+    names = KNOWN_DOCS | set(finding_docs(f))
+    out = []
+    for seg in re.split(r"\s+/\s+|;\s*", f.get("위치") or ""):
+        m = re.match(r"\s*([^:\[\]]+?)\s*:\s*(.*)$", seg)
+        if m and m.group(1) in names:
+            if m.group(1) != doc:
+                continue
+            seg = m.group(2)
+        out += [int(n) for n in re.findall(r"문단\s*(\d+)", seg)]
+    return out
 
 
 # ------------------------------------------------------------------ 문단 토큰화
@@ -119,7 +179,8 @@ class Para:
         self.ranges = []   # 이미 메모를 단 (s, e, memo paragraphs list)
 
     def find(self, quote):
-        """공백 무시 매칭. '…'로 생략된 인용은 앞부분~뒷부분 범위. (s, e) 문자 범위."""
+        """공백 무시 매칭. '…'로 생략된 인용은 앞부분~뒷부분 범위. (s, e) 문자 범위.
+        생략 뒤 부분 중 하나라도 못 찾으면 None(다른 문단에서 완전히 맞는 자리를 계속 찾는다)."""
         norm, idx = [], []
         for i, ch in enumerate(self.text):
             if not ch.isspace():
@@ -137,7 +198,7 @@ class Para:
         for part in parts[1:]:
             k = norm.find(part, b)
             if k < 0:
-                break
+                return None
             b = k + len(part)
         return idx[a], idx[b - 1] + 1
 
@@ -224,6 +285,7 @@ class MemoFactory:
         ft = int((now_utc.timestamp() + 11644473600) * 10_000_000)
         self.ft_lo, self.ft_hi = ft & 0xFFFFFFFF, ft >> 32
         self.seq = 0
+        self.used_ids = set()
 
     def renumber(self, records):
         """메모 번호를 문서 순서(문단 번호, 시작 위치)대로 다시 매긴다. records: [(정렬키, fieldBegin)]"""
@@ -242,8 +304,12 @@ class MemoFactory:
 
     def make(self, lines, char_ref="0"):
         self.n += 1
-        self.seq += 1
-        fid = str(1_900_000_000 + self.seq * 7919 % 99_999_999)
+        while True:  # 문서에 이미 있는 필드 id와 겹치면 fieldEnd가 엉뚱한 필드를 닫는다
+            self.seq += 1
+            fid = str(1_900_000_000 + self.seq * 7919 % 99_999_999)
+            if fid not in self.used_ids:
+                break
+        self.used_ids.add(fid)
         begin_ctrl = ET.Element(HP + "ctrl")
         fb = ET.SubElement(begin_ctrl, HP + "fieldBegin", {
             "id": fid, "type": "MEMO", "name": "", "editable": "1", "dirty": "0",
@@ -288,24 +354,79 @@ def short_summary(f, limit=38):
     return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
 
 
-def memo_lines(f):
-    """첫 줄만 보고도 무엇을 고칠지 알 수 있게: 요약 → 수정안 → 상세 → 근거 순."""
-    tag = f"{f.get('id', '')} {f.get('중요도', '')}".strip()
+SEV_LABEL = {"★필수": "반드시 수정", "확인": "수정 요청", "참고": "수정 권장"}
+STD_ID = re.compile(r"\s*\((?:표준문구\s*)?S-\d+\)")  # 표준문구 번호는 구매팀 내부용
+
+
+def label(f):
+    """메모 머리표. 점검번호(②-18 등)는 작성자가 모르므로 쉬운 말로 쓴다."""
+    if f.get("참조"):
+        return "같은 문제(다른 위치)"
     if f.get("판정") == "확인필요":
-        tag += " 확인요청"
-    lines = [f"{tag} | {short_summary(f)}"]
-    if f.get("수정안"):
-        lines.append("▶ 수정: " + f["수정안"])
-    detail = f.get("문제점") or ""
-    if detail and WS.sub("", detail) != WS.sub("", short_summary(f, 10**6)):
-        lines.append("상세: " + detail)
-    if f.get("항목"):
-        lines.append("점검항목: " + f["항목"])
-    if f.get("근거") and f["근거"].strip() not in ("-", ""):
-        lines.append("근거: " + f["근거"])
-    if f.get("연계"):
-        lines.append("연계: " + f["연계"])
-    return [WS.sub(" ", x).strip() for x in lines]
+        return "답변 요청"
+    return SEV_LABEL.get(f.get("중요도"), "수정 요청")
+
+
+def bullets(text, limit=4):
+    """문장·줄 단위로 끊어 개조식 항목으로. 검색어 기록(내부용)은 빼고 최대 limit개."""
+    text = STD_ID.sub("", str(text or ""))
+    # 괄호 안 검색어 기록·[문단 n] 번호는 작성자에게 의미가 없다(엑셀에는 남는다).
+    # 본문 안의 [문단 n]은 지우면 문장이 깨지므로 validate_review가 경고한다.
+    text = re.sub(r"\s*\([^()]*(?:검색|\[문단)[^()]*\)", "", text)
+    out = []
+    for line in text.splitlines():
+        # '있습니다. ' 같은 문장 끝에서만 끊는다. '다. 성능 요구사항' 같은 항목 기호는 끊지 않는다
+        for s in re.split(r"(?<=[가-힣][다요음함])\.\s+", line.strip()):
+            s = s.strip().rstrip(".").strip()
+            if s and "검색 결과" not in s:
+                out.append(re.sub(r"^[-·•]\s*", "", s))
+    return out[:limit]
+
+
+def current_text(f, doc, limit=90):
+    """메모의 '현재 문구': 이 문서에서 지적한 원문. 없거나 너무 길면 줄인다."""
+    q = (quote_for_doc(f, doc) if doc else f.get("원문") or "").strip()
+    if not q or q.startswith("해당 내용 없음"):
+        return ""
+    q = WS.sub(" ", q)
+    return q if len(q) <= limit else q[:limit - 1].rstrip() + "…"
+
+
+def memo_lines(f, doc=None):
+    """메모 본문. 계약 전문가가 아닌 작성자가 메모만 보고 고칠 수 있어야 한다:
+      [반드시 수정] 요약
+      ■ 현재 문구: "원문"
+      ■ 왜 고쳐야 하나 / 확인이 필요한 이유
+       - 문제점(문장마다 한 항목)
+      ■ 이렇게 고쳐 주세요 (확인필요: ■ 답변해 주세요)
+       - 수정안(붙여넣을 문구) 또는 조치
+      ■ 근거
+       - 근거 출처(줄여 쓰지 않는다)
+      (점검번호 ②-18)  ← 구매팀이 수정요청표와 맞춰 볼 때 쓴다"""
+    check = f.get("판정") == "확인필요"
+    title = short_summary(f)
+    lines = [f"[{label(f)}] {title}"]
+    cur = current_text(f, doc)
+    if cur:
+        lines += ["■ 현재 문구", f' "{cur}"']
+    probs = [s for s in bullets(f.get("문제점")) if WS.sub("", s) != WS.sub("", title)]
+    if probs:
+        lines += ["■ 확인이 필요한 이유" if check else "■ 왜 고쳐야 하나"] + [f" - {s}" for s in probs]
+    fix = "" if check else (f.get("수정안") or "").strip()
+    fix = fix if fix and not fix.endswith("참조") else (f.get("조치") or fix).strip()
+    todo = bullets(fix, limit=6)
+    if todo:
+        lines += ["■ 답변해 주세요" if check else "■ 이렇게 고쳐 주세요"] + [f" - {s}" for s in todo]
+    basis_type = f.get("기준유형", checklist_item(f.get("id")).get("기준유형"))
+    if basis_type:
+        basis_labels = basis_type if isinstance(basis_type, list) else [basis_type]
+        lines += ["■ 기준 유형"] + [f" - {item}" for item in basis_labels]
+    basis = [b.strip() for b in re.split(r"\s+/\s+|\n", f.get("근거") or "") if b.strip() and b.strip() != "-"]
+    if basis:
+        lines += ["■ 근거"] + [f" - {b}" for b in basis[:3]]
+    if f.get("id"):
+        lines.append(f"(점검번호 {f['id']})")
+    return lines
 
 
 def add_memo_para_pr(header):
@@ -333,31 +454,54 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("hwpx")
     ap.add_argument("findings", nargs="+")
-    ap.add_argument("--doc", required=True, help="이 파일의 문서 구분: 제안요청서 | 공고문 | 과업내용서 ...")
+    ap.add_argument("--doc", required=True, help="이 파일의 문서 구분: 제안요청서 | 공고문 | 용역계약의뢰서 등")
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--author", default="구매팀")
     ap.add_argument("--include-check", action="store_true")
     a = ap.parse_args()
+    source = os.path.abspath(a.hwpx)
+    if paths_alias(a.out, source):
+        print("[중단] 출력 파일(-o)이 원본과 같습니다. 다른 이름을 주세요.")
+        return 2
+    if os.path.lexists(a.out):
+        print(f"[중단] 출력 파일이 이미 있습니다: {a.out}")
+        return 2
 
-    if a.hwpx.lower().endswith(".hwp"):
-        # .hwp(바이너리)에는 메모를 직접 못 쓴다. 설치된 한/글로 HWPX로 변환해 진행한다.
-        try:
-            from convert_to_hwpx import convert_hwp_to_hwpx
-        except ImportError:
-            import os
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from convert_to_hwpx import convert_hwp_to_hwpx
-        try:
-            converted = convert_hwp_to_hwpx(a.hwpx)
-        except RuntimeError as e:
-            print(f"[중단] .hwp를 HWPX로 변환하지 못했습니다: {e}")
-            print("→ 한/글에서 '다른 이름으로 저장 → HWPX'로 저장해 다시 올려주세요.")
-            return 2
-        print(f"[변환] {a.hwpx} → {converted} (이 HWPX에 메모를 답니다)")
-        a.hwpx = converted
+    try:
+        if source.lower().endswith(".hwp"):
+            # 바이너리 원본은 OS 임시 폴더의 내부 사본으로 변환해 주석한다.
+            try:
+                from convert_to_hwpx import convert_hwp_to_hwpx
+            except ImportError:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+                from convert_to_hwpx import convert_hwp_to_hwpx
+            with tempfile.TemporaryDirectory(prefix="rfp-review-annotate-") as temp_dir:
+                converted_dst = os.path.join(temp_dir, "converted.hwpx")
+                try:
+                    converted = convert_hwp_to_hwpx(source, converted_dst)
+                except Exception as e:
+                    print(f"[중단] .hwp를 HWPX로 변환하지 못했습니다: {e}")
+                    print("→ 한/글에서 '다른 이름으로 저장 → HWPX'로 저장해 다시 올려주세요.")
+                    return 2
+                print(f"[변환] {source} → 내부 임시 사본 (이 HWPX에 메모를 답니다)")
+                a.hwpx = converted
+                return _annotate(a)
+        return _annotate(a)
+    except Exception as e:
+        print(f"[중단] HWPX 주석을 생성하지 못했습니다: {e}")
+        return 2
 
+
+def _annotate(a):
+    if paths_alias(a.out, a.hwpx):
+        print("[중단] 출력 파일(-o)이 원본과 같습니다. 다른 이름을 주세요.")
+        return 2
     findings, all_findings = load_findings(a.findings, a.include_check)
-    zin = zipfile.ZipFile(a.hwpx)
+    with zipfile.ZipFile(a.hwpx) as zin:
+        return _annotate_archive(a, findings, zin)
+
+
+def _annotate_archive(a, findings, zin):
     sec_names = sorted([n for n in zin.namelist() if re.match(r"Contents/section\d+\.xml$", n)],
                        key=lambda n: int(re.findall(r"\d+", n)[-1]))
     if not sec_names:
@@ -412,17 +556,19 @@ def main():
         return para_obj[id(el)]
 
     factory = MemoFactory(a.author, max_z)
+    factory.used_ids = {fb.get("id") for s in sections for fb in s["root"].iter(HP + "fieldBegin")}
     anchored, unanchored, partial = [], [], []
     records = []  # 번호 재정렬용 (문서 위치, fieldBegin)
 
     for f in findings:
         q = quote_for_doc(f, a.doc)
-        hints = para_hint(f)
-        docs = f.get("문서") or ""
+        hints = para_hint(f, a.doc)
+        docs = finding_docs(f)
         mine = a.doc in docs or not docs
         if q is None:
-            # 원문은 없지만 [문단 n] 위치가 있으면 그 문단 전체에 단다
-            if mine and hints and not (f.get("원문") or "").startswith("해당 내용 없음"):
+            # 원문은 없지만 [문단 n] 위치가 있으면 그 문단 전체에 단다.
+            # 문서가 명시된 finding만 해당한다(문서 미상 finding의 문단 번호는 어느 문서 것인지 모른다).
+            if a.doc in docs and hints and not (f.get("원문") or "").startswith("해당 내용 없음"):
                 for num, s, el in paras:
                     if num == hints[0]:
                         q = get_para(el).text.strip()
@@ -440,7 +586,7 @@ def main():
                 hit = (num, P, rng, False)
                 break
         if hit is None:  # 앞 20자만으로 다시 시도
-            short = WS.sub("", q)[:20]
+            short = WS.sub("", re.split(r"…|\.{3,}", q)[0])[:20]
             if len(short) >= 8:
                 for num, s, el in order:
                     P = get_para(el)
@@ -453,10 +599,10 @@ def main():
             continue
         num, P, (s, e), is_partial = hit
         s, e = P.fit(s, e)
-        lines = memo_lines(f)
+        lines = memo_lines(f, a.doc)
         prev = P.overlapping(s, e)
         if prev:  # 같은 범위에 이미 메모가 있으면 내용을 이어 붙인다
-            MemoFactory.add_lines(prev[2], [""] + lines)
+            MemoFactory.add_lines(prev[2], ["", MEMO_SEP] + lines)
         else:
             begin, end, sl = factory.make(lines)
             records.append(((num, s), begin[0]))
@@ -477,20 +623,27 @@ def main():
 
     # 검토 요약 메모: 첫 문단 앞부분에 단다
     # 참조 메모(같은 지적을 다른 위치에도 단 포인터)는 그려주되 건수에는 세지 않는다.
-    ref_cnt = sum(1 for f, _ in anchored if f.get("참조"))
-    req = [x for x in all_findings if x.get("판정") == "수정필요" and not x.get("참조")]
-    must = [x for x in req if x.get("중요도") == "★필수"]
-    chk = [x for x in all_findings if x.get("판정") == "확인필요" and not x.get("참조")]
-    summary = [f"검토 요약 | 이 문서 수정 요청 {len(anchored) + len(unanchored) - ref_cnt}건",
-               "노란 형광펜과 메모가 달린 곳을 고쳐 주세요. 고친 메모는 지우고, 반영하지 않은 메모에는 사유를 덧붙여 회신해 주세요.",
-               f"전체 검토 결과(공고문·원가계산서 포함): 수정필요 {len(req)}건(★필수 {len(must)}건), 확인필요 {len(chk)}건"]
-    if unanchored:
-        summary.append("")
-        summary.append(f"※ 위치를 특정하지 못했거나 내용이 빠진 항목 {len(unanchored)}건")
-        for f in unanchored:
-            ls = memo_lines(f)
-            summary.append("- " + ls[0])
-            summary += ["   " + x for x in ls[1:2]]  # 수정안까지
+    own = [f for f, _ in anchored if not f.get("참조")] + [f for f in unanchored if not f.get("참조")]
+    n_req = sum(1 for f in own if f.get("판정") == "수정필요")
+    n_chk = len(own) - n_req
+    head = f"이 문서에 고칠 곳 {n_req}건" + (f", 답변이 필요한 곳 {n_chk}건" if n_chk else "") + "에 메모를 달았습니다."
+    summary = ["[입찰서류 검토 요약] AI 1차 검토 후 구매팀 확인", head]
+    # 문서 순서대로 제목만 모아 한눈에 보이게 한다. 위치를 못 찾은 지적은 본문까지 여기 싣는다.
+    ordered = [f for f, _ in sorted(((f, n) for f, n in anchored if not f.get("참조")), key=lambda x: x[1])]
+    lost = [f for f in unanchored if not f.get("참조")]  # 못 단 참조 메모는 본 항목과 중복이라 요약에 안 싣는다
+    for name in ("반드시 수정", "수정 요청", "수정 권장", "답변 요청"):
+        group = [f for f in ordered if label(f) == name]
+        if group:
+            summary += ["", f"■ {name} {len(group)}건"]
+            summary += [f" {i}. {short_summary(f, 60)}" for i, f in enumerate(group, 1)]
+    if lost:
+        summary += ["", f"■ 위치를 특정하지 못한 지적 {len(lost)}건"]
+        for f in lost:
+            summary += [" " + x for x in memo_lines(f) if not x.startswith("(점검번호")]
+    summary += ["", "■ 처리 방법",
+                " - 노란 형광펜: 고친 뒤 메모 삭제",
+                " - 파란 형광펜: 메모에 답변 작성",
+                " - 고치지 않을 곳: 메모에 사유 작성"]
     if paras:
         P = get_para(paras[0][2])
         body = P.text.rstrip()
@@ -504,7 +657,7 @@ def main():
             first = list(overlap[2])
             for c in first:
                 overlap[2].remove(c)
-            MemoFactory.add_lines(overlap[2], summary + [""])
+            MemoFactory.add_lines(overlap[2], summary + ["", MEMO_SEP])
             for c in first:
                 overlap[2].append(c)
         else:
@@ -522,23 +675,36 @@ def main():
         body = ET.tostring(s["root"], encoding="unicode")
         body = s["root_tag"] + body[body.index(">") + 1:]
         changed[s["name"]] = (s["prolog"] + body).encode("utf-8")
-    with zipfile.ZipFile(a.out, "w") as zout:
-        for info in zin.infolist():
-            data = changed.get(info.filename, zin.read(info.filename))
-            zi = zipfile.ZipInfo(info.filename, info.date_time)
-            zi.compress_type = zipfile.ZIP_STORED if info.filename == "mimetype" else info.compress_type
-            zi.external_attr = info.external_attr
-            zout.writestr(zi, data)
+    try:
+        with open(a.out, "xb") as out_fp:
+            with zipfile.ZipFile(out_fp, "w") as zout:
+                for info in zin.infolist():
+                    data = changed.get(info.filename, zin.read(info.filename))
+                    zi = zipfile.ZipInfo(info.filename, info.date_time)
+                    zi.compress_type = zipfile.ZIP_STORED if info.filename == "mimetype" else info.compress_type
+                    zi.external_attr = info.external_attr
+                    zout.writestr(zi, data)
+    except FileExistsError:
+        print(f"[중단] 출력 파일이 이미 있습니다: {a.out}")
+        return 2
 
     print(f"저장: {a.out}")
     print(f"메모 {len(anchored)}건 + 요약 메모 1건 (위치 못 찾음 {len(unanchored)}건, 부분 일치 {len(partial)}건)")
-    for f, num in anchored:
-        mark = " (부분 일치: 앞부분만 표시)" if (f, num) in partial else ""
-        print(f"- [문단 {num}] {f.get('id')} {f.get('항목')}{mark}")
+    # 고쳐야 할 것(요약 메모로·부분 일치)을 먼저, 정상 메모는 건수가 많으면 줄여서 출력한다(하네스 출력 잘림 방지)
     for f in unanchored:
         print(f"- [요약 메모로] {f.get('id')} {f.get('항목')}")
+    for f, num in anchored:
+        if (f, num) in partial:
+            print(f"- [부분 일치: 앞부분만 표시] [문단 {num}] {f.get('id')} {f.get('항목')}")
+    ok = [(f, num) for f, num in anchored if (f, num) not in partial]
+    for f, num in ok[:20]:
+        print(f"- [문단 {num}] {f.get('id')} {f.get('항목')}")
+    if len(ok) > 20:
+        print(f"- … 정상 메모 {len(ok) - 20}건 더")
     return 0
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")  # 하네스가 파이프로 읽어도 UTF-8로 나가게
+    sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())
