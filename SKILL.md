@@ -38,7 +38,7 @@ If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --che
 
 ### 1. Extract
 - `python <skill-dir>/scripts/extract_text.py <guideline> <rfp.hwpx> [<other docs>] -o <work>/extracted`
-- Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[시트!12행]`, `[줄 7]`. Put the tag in `위치`. Pair table values by row.
+- Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[문단 3 머리말]` (also 꼬리말/각주/미주), `[시트!12행]`, `[줄 7]`. Put the tag in `위치`. Pair table values by row.
 - `읽은 내용이 없습니다` or `[실패]` means the file was not read: say so; do not review it as empty.
 - An Excel cell shown as `=…(계산값 없음)` is a formula whose result was never saved: ask for the file saved once in Excel, or treat that value as unknown. Excel dates appear as serial numbers (e.g. `45930`); do not guess the date.
 - DOCX tables have no row/column tags; pair DOCX table values only when the line itself makes the pairing clear.
@@ -88,7 +88,7 @@ python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json rev
 ```
 - Yellow = 수정필요, blue = 확인필요. The summary memo on the first paragraph also carries findings it cannot place and findings on other documents, with their location.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
-- `요약 메모로` lines mean the quote spans paragraphs, was not found, or is in a header/footer/footnote (memos never go there; for those, `요약 메모로` is expected and final). Otherwise shorten the quote to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
+- Findings whose `위치` has 머리말/꼬리말/각주/미주 always go to the summary memo (`요약 메모로`); that is final. Any other `요약 메모로` line means the quote was not matched in the HWPX: shorten it to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
 - The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos. Nothing here opens the file in 한/글 — do not claim it was checked in 한/글.
 
 ### 8. Reply (Korean, short)

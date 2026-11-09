@@ -289,7 +289,7 @@ class MemoFactory:
         ET.SubElement(end_ctrl, HP + "fieldEnd", {"beginIDRef": fid, "fieldid": MEMO_FIELD_ID})
         return begin_ctrl, end_ctrl, sl
 
-    PARA_PR = "0"  # 메모 문단 모양(왼쪽 정렬). main()에서 header에 추가한 id로 바꾼다
+    PARA_PR = "0"  # 메모 문단 모양(왼쪽 정렬). annotate()에서 header.xml에 추가한 id로 바꾼다
 
     @staticmethod
     def add_lines(sublist, lines):
@@ -491,7 +491,7 @@ def annotate(a, findings, others, zin):
             summary += ["", f"■ {LABEL[verdict]} {len(group)}건"]
             summary += [f" {i}. {title(f)}" for i, f in enumerate(group, 1)]
     if unanchored:
-        summary += ["", f"■ 위치를 특정하지 못한 지적 {len(unanchored)}건"]
+        summary += ["", f"■ 본문에 표시하지 못한 지적 {len(unanchored)}건"]
         for f in unanchored:
             lines = memo_lines(f)
             summary += [f" ({f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
@@ -554,7 +554,7 @@ def annotate(a, findings, others, zin):
         return 2
 
     print(f"저장: {out}")
-    print(f"메모 {len(anchored)}건 + 요약 메모 1건 (위치 못 찾음 {len(unanchored)}건, 다른 문서 {len(others)}건)")
+    print(f"메모 {len(anchored)}건 + 요약 메모 1건 (본문 표시 못 함 {len(unanchored)}건, 다른 문서 {len(others)}건)")
     print(f"합계: 수정필요 {n_req}건, 확인필요 {n_chk}건")
     if scripts:
         print(f"문서 스크립트 {len(scripts)}개를 검토본에서 뺐습니다.")

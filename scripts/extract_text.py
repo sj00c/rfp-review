@@ -29,12 +29,15 @@ def clean(s):
 
 
 # ------------------------------------------------------------------ HWPX
+AREA = {"header": "머리말", "footer": "꼬리말", "footNote": "각주", "endNote": "미주"}
+
+
 def from_hwpx(path):
     out = []
     with zipfile.ZipFile(path) as z:
         secs = sorted([n for n in z.namelist() if re.match(r"Contents/section\d+\.xml$", n)],
                       key=lambda n: int(re.findall(r"\d+", n)[-1]))
-        state = {"n": 0, "tbl": 0, "memo": 0}
+        state = {"n": 0, "tbl": 0, "memo": 0, "area": ""}
 
         def walk(el, cell):
             tag = el.tag.rsplit("}", 1)[-1]
@@ -43,6 +46,13 @@ def from_hwpx(path):
                 tno = state["tbl"]
                 for ch in el:
                     walk(ch, (tno, None))
+                return
+            if tag in AREA:
+                # 머리말·꼬리말·각주·미주: annotate_hwpx는 여기에 메모를 달지 않으므로 위치 표시에 밝힌다
+                outer, state["area"] = state["area"], " " + AREA[tag]
+                for ch in el:
+                    walk(ch, cell)
+                state["area"] = outer
                 return
             if tag == "fieldBegin":
                 # 기존 메모·누름틀 안 문단: 번호는 annotate_hwpx와 맞춰 세되 RFP 본문으로 내보내지 않는다
@@ -77,7 +87,7 @@ def from_hwpx(path):
                         elif kind in ("pic", "ole"):
                             objs.append("[그림]" if kind == "pic" else "[개체]")
                 txt = clean("".join(parts))
-                where = f" 표{cell[0]} {cell[1][0]}-{cell[1][1]}" if cell and cell[1] else ""
+                where = state["area"] + (f" 표{cell[0]} {cell[1][0]}-{cell[1][1]}" if cell and cell[1] else "")
                 if txt:
                     state["n"] += 1
                     # 표 안 문단에는 표 번호와 행-열을 붙인다. 없으면 모델이 배점·등급을 다른 항목에 잘못 붙인다.
