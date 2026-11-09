@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """검토 대상 문서를 위치 표시가 붙은 텍스트로 변환한다.
 
-지원: .hwpx .hwp(HWP 5.x, 배포용/암호 문서 제외) .pdf .docx .xlsx .txt .md
-출력: <출력폴더>/<파일명>.txt  — 각 줄 앞에 [p.쪽] 또는 [문단 n] / [시트!셀] 위치 표시
+지원: .hwpx .hwp(HWP 5.x, 배포용/암호 문서 제외) .docx .xlsx .xlsm .txt .md (표준 라이브러리만 사용)
+PDF는 읽지 않는다: 원본을 HWPX·DOCX로 저장하거나 텍스트를 복사한 .txt를 받는다.
+출력: <출력폴더>/<파일명>.txt  — 각 줄 앞에 [문단 n] / [시트!n행] / [줄 n] 위치 표시
 
 사용법:
   python extract_text.py 파일1 [파일2 ...] -o extracted/
@@ -170,7 +171,7 @@ def from_hwp(path):
     flags = struct.unpack("<I", header[36:40])[0]
     compressed, encrypted, distributed = flags & 1, flags & 2, flags & 4
     if encrypted or distributed:
-        raise RuntimeError("암호 또는 배포용 HWP 문서입니다. 일반 HWPX/PDF로 저장해 다시 올려주세요.")
+        raise RuntimeError("암호 또는 배포용 HWP 문서입니다. 한/글에서 HWPX로 저장해 주세요.")
     secs = sorted([e for e in ole.listdir() if e[0] == "BodyText"], key=lambda e: int(re.findall(r"\d+", e[1])[0]))
     out, n = [], 0
     for e in secs:
@@ -229,30 +230,6 @@ def from_hwp(path):
     return out
 
 
-# ------------------------------------------------------------------ PDF
-def from_pdf(path):
-    out = []
-    try:
-        import pdfplumber
-        with pdfplumber.open(path) as pdf:
-            for p, page in enumerate(pdf.pages, 1):
-                for line in (page.extract_text() or "").splitlines():
-                    if clean(line):
-                        out.append(f"[p.{p}] {clean(line)}")
-        return out
-    except ImportError:
-        pass
-    try:
-        from pypdf import PdfReader
-    except ImportError:
-        from PyPDF2 import PdfReader
-    for p, page in enumerate(PdfReader(path).pages, 1):
-        for line in (page.extract_text() or "").splitlines():
-            if clean(line):
-                out.append(f"[p.{p}] {clean(line)}")
-    return out
-
-
 # ------------------------------------------------------------------ DOCX
 def from_docx(path):
     W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -267,27 +244,46 @@ def from_docx(path):
     return out
 
 
-# ------------------------------------------------------------------ XLSX (원가계산보고서 등)
+# ------------------------------------------------------------------ XLSX
+X = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+PKG = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+
 def from_xlsx(path):
-    import openpyxl
-    values = openpyxl.load_workbook(path, data_only=True)
-    formulas = openpyxl.load_workbook(path, data_only=False)
-    out = []
-    for ws in values.worksheets:
-        wf = formulas[ws.title]
-        for row in ws.iter_rows():
-            cells = []
-            for c in row:
-                v = c.value
-                if v in (None, ""):
-                    # 계산값이 저장되지 않은 수식은 빈 칸이 아니다. 수식을 그대로 보여 준다.
-                    f = wf[c.coordinate].value
-                    if isinstance(f, str) and f.startswith("="):
-                        cells.append(f"{c.coordinate}={f}(계산값 없음)")
-                    continue
-                cells.append(f"{c.coordinate}={clean(str(v))}")
-            if cells:
-                out.append(f"[{ws.title}!{row[0].row}행] " + " | ".join(cells))
+    with zipfile.ZipFile(path) as z:
+        names = set(z.namelist())
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            # 서식이 섞인 글자(r/t)도 합친다. 읽기 표시(rPh)는 본문이 아니므로 뺀다.
+            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(X + "si"):
+                ts = si.findall(X + "t") + si.findall(f"{X}r/{X}t")
+                shared.append("".join(t.text or "" for t in ts))
+        rels = {r.get("Id"): r.get("Target") for r in
+                ET.fromstring(z.read("xl/_rels/workbook.xml.rels")).iter(PKG + "Relationship")}
+        out = []
+        for sheet in ET.fromstring(z.read("xl/workbook.xml")).iter(X + "sheet"):
+            target = rels[sheet.get(REL)].lstrip("/")
+            target = target if target.startswith("xl/") else "xl/" + target
+            for row in ET.fromstring(z.read(target)).iter(X + "row"):
+                cells = []
+                for c in row.iter(X + "c"):
+                    kind, v, f = c.get("t"), c.find(X + "v"), c.find(X + "f")
+                    if kind == "inlineStr":
+                        text = "".join(t.text or "" for t in c.iter(X + "t"))
+                    elif v is None:
+                        # 계산값이 저장되지 않은 수식은 빈 칸이 아니다. 수식을 그대로 보여 준다.
+                        text = f"={f.text}(계산값 없음)" if f is not None and f.text else ""
+                    elif kind == "s":
+                        text = shared[int(v.text)]
+                    elif kind == "b":
+                        text = "TRUE" if v.text == "1" else "FALSE"
+                    else:
+                        text = v.text or ""
+                    if clean(text):
+                        cells.append(f"{c.get('r')}={clean(text)}")
+                if cells:
+                    out.append(f"[{sheet.get('name')}!{row.get('r')}행] " + " | ".join(cells))
     return out
 
 
@@ -296,7 +292,7 @@ def from_txt(path):
         return [f"[줄 {i}] {clean(ln)}" for i, ln in enumerate(fp, 1) if clean(ln)]
 
 
-READERS = {".hwpx": from_hwpx, ".hwp": from_hwp, ".pdf": from_pdf, ".docx": from_docx,
+READERS = {".hwpx": from_hwpx, ".hwp": from_hwp, ".docx": from_docx,
            ".xlsx": from_xlsx, ".xlsm": from_xlsx, ".txt": from_txt, ".md": from_txt}
 
 
@@ -350,12 +346,12 @@ def main():
     for f in a.files:
         ext = os.path.splitext(f)[1].lower()
         if ext not in READERS:
-            print(f"[건너뜀] {f}: 지원하지 않는 형식({ext}). HWPX/PDF/DOCX로 변환해 주세요.")
+            print(f"[건너뜀] {f}: 지원하지 않는 형식({ext}). HWPX·DOCX·XLSX·TXT로 저장해 주세요.")
             ok = False
             continue
         try:
             lines = READERS[ext](f)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"[실패] {f}: {e}")
             ok = False
             continue
@@ -365,10 +361,9 @@ def main():
             fp.write(f"# 원본: {os.path.basename(f)}\n" + "\n".join(lines) + "\n")
         sources[name] = {"원본": os.path.abspath(f), "sha256": sha256(f)}
         chars = sum(len(ln) for ln in lines)
-        pages = len({ln.split("]")[0] for ln in lines})
-        warn = "  ※ 텍스트가 거의 없음: 스캔 PDF일 수 있습니다." if (ext == ".pdf" and chars < 200 * max(1, pages)) else ""
+        warn = ""
         if not lines:
-            warn += "  ※ 읽은 내용이 없습니다. 빈 문서로 보고 검토하지 마세요."
+            warn = "  ※ 읽은 내용이 없습니다. 빈 문서로 보고 검토하지 마세요."
             ok = False
         print(f"[완료] {f} → {out} ({len(lines)}줄, {chars:,}자){warn}")
     with open(manifest, "w", encoding="utf-8") as fp:

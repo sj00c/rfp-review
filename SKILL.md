@@ -1,17 +1,18 @@
 ---
 name: rfp-review
-description: "제안요청서(RFP) 검토: 사용자가 준 검토 지침 파일(엑셀·한글·PDF 등)만을 근거로 작성 중인 RFP를 점검하고, 문제 위치에 형광펜·메모·수정안을 단 한글(HWPX) 검토본을 돌려줍니다. 예산·수치 불일치, 오타·빈칸, 문서 간 모순도 확인합니다. 제안요청서 검토, RFP 점검, 발주 전 사전검토에 사용합니다."
+description: "제안요청서(RFP) 검토: 사용자가 준 검토 지침 파일(엑셀·한글·워드·텍스트)만을 근거로 작성 중인 RFP를 점검하고, 문제 위치에 형광펜·메모·수정안을 단 한글(HWPX) 검토본을 돌려줍니다. 예산·수치 불일치, 오타·빈칸, 문서 간 모순도 확인합니다. 제안요청서 검토, RFP 점검, 발주 전 사전검토에 사용합니다."
 ---
 
 # RFP 검토
 
 Goal: the author opens the returned 한/글 file and finds a highlight and a short memo on every spot that must change or be confirmed. This is a first-pass AI review; say so in the reply.
 
-Scripts are in `scripts/` next to this file; run them by absolute path (`python <skill-dir>/scripts/<name>.py`). Use `python3` or `py -3` if `python` is missing. Set `PYTHONIOENCODING=utf-8` if Korean is garbled. Every value you write into JSON is Korean; keys are fixed.
+Scripts are in `scripts/` next to this file; run them by absolute path (`python <skill-dir>/scripts/<name>.py`). They need only Python 3.10+ (no packages to install); use `python3` or `py -3` if `python` is missing. Set `PYTHONIOENCODING=utf-8` if Korean is garbled. Every value you write into JSON is Korean; keys are fixed.
 
 ## Inputs and paths
-- **지침** (required): the review guideline file the user gives — Excel, HWP/HWPX, PDF, DOCX, TXT. If none is given, ask for it. There is no built-in checklist.
-- **RFP** (required): the draft 제안요청서, `.hwpx` or `.hwp` (`.hwp` needs 한/글 to convert).
+- **지침** (required): the review guideline file the user gives — XLSX, HWPX/HWP, DOCX, TXT/MD. If none is given, ask for it. There is no built-in checklist.
+- **RFP** (required): the draft 제안요청서 as `.hwpx`. Memos can only be written into HWPX. If you get `.hwp`, ask the user to save it in 한/글 as HWPX (파일 → 다른 이름으로 저장 → HWPX).
+- PDF and scanned images are not read. Ask for the original file (HWPX/DOCX/XLSX) or the text pasted into a `.txt`.
 - Optional related documents (공고문, 원가계산서, 과업내용서 …): used only for cross-checks.
 - Output: `<RFP folder>/output/`, or the folder the user names. Never the skill folder or the shell cwd.
 - Work folder: `<output>/.rfp-review/<RFP stem>/`. All intermediates live there; run the commands below from that folder. Never modify the user's files.
@@ -36,10 +37,10 @@ Scripts are in `scripts/` next to this file; run them by absolute path (`python 
 If the work folder exists, run `python scripts/extract_text.py --check -o <work>/extracted`. Exit 0: continue from the existing files. Exit 1 (an input changed or files missing): delete that work folder and start over — never reuse old notes or findings.
 
 ### 1. Extract
-- `.hwp` → `python scripts/convert_to_hwpx.py <rfp.hwp> -o <work>/<stem>.hwpx`, then use that HWPX everywhere. If conversion fails, extract the `.hwp` directly and ask the user to save it as HWPX for the memo step.
 - `python scripts/extract_text.py <guideline> <rfp.hwpx> [<other docs>] -o <work>/extracted`
-- Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[p.3]`, `[시트!12행]`. Put the tag in `위치`. Pair table values by row.
-- A scanned-PDF or empty-text warning means the file was not read: say so; do not review it as empty.
+- Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[시트!12행]`, `[줄 7]`. Put the tag in `위치`. Pair table values by row.
+- `읽은 내용이 없습니다` or `[실패]` means the file was not read: say so; do not review it as empty.
+- An Excel cell shown as `=…(계산값 없음)` is a formula whose result was never saved: ask for the file saved once in Excel, or treat that value as unknown.
 
 ### 2. Read the guideline first
 Read the whole extracted guideline. In `<work>/review_notes.md` list each item that can be judged from documents, with its verbatim line. Skip items about internal approvals or procedures outside the documents — they produce no memo.
@@ -69,7 +70,7 @@ Write `<work>/review.json`:
    "근거": "<지침 문구 그대로 | 문서 자체 오류>"}
 ]}
 ```
-- `문서` is the document name used with `--doc` below. One finding per location; the same problem in two places is two findings.
+- `id`: `R1`, `R2` … (`N…` is used by check_numbers). `문서` is the document name used with `--doc` below. One finding per location; the same problem in two places is two findings.
 - `요약`: one short line, the memo title. `수정안`: text the author can paste, or for 확인필요 what to confirm. Do not invent legal wording.
 - Quote at least 4 characters next to the problem; never quote `[수식…]`/`[그림]` markers.
 
@@ -86,8 +87,8 @@ python scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json review.json --d
 ```
 - Yellow = 수정필요, blue = 확인필요. Findings it cannot place go into the summary memo on the first paragraph with their location.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
-- Many `요약 메모로`/`부분 일치` lines mean bad quotes: fix review.json, validate, and annotate again (it gets a new name; tell the user which file is final, or delete only the bad file you just created).
-- If 한/글 reports the file as damaged (Windows + 한/글): run `strip_scripts.py` then `resave_hwpx.py` on a copy in the work folder; if still broken, `python scripts/safe_annotate.py <rfp.hwpx> numeric_findings.json review.json --doc 제안요청서 -o <new path>`, which moves only the problematic memos into the summary. Say whether 한/글 actually opened the file; a ZIP/XML check is not that.
+- `요약 메모로` lines mean the quote spans paragraphs or was not found in the HWPX: shorten it to text inside one paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
+- The review copy drops document scripts (`Scripts/*.js`); with them 한/글 may refuse to open a file with added memos. Nothing here opens the file in 한/글 — do not claim it was checked in 한/글.
 
 ### 8. Reply (Korean, short)
 - One line: 수정필요 n건, 확인필요 n건 (counts from the validate/annotate output), noting it is an AI first-pass review.

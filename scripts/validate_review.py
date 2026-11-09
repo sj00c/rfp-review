@@ -107,7 +107,7 @@ def main():
     findings = []
     for p in a.findings:
         with open(p, encoding="utf-8") as fp:
-            findings += [(p, f) for f in json.load(fp).get("findings", [])]
+            findings += [(p, f) for f in json.load(fp)["findings"]]
 
     errors = check(findings, guide, docs)
     counts = {v: sum(1 for _, f in findings if f.get("판정") == v) for v in sorted(VERDICTS)}

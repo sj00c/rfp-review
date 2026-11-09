@@ -1,35 +1,20 @@
-# 샘플 자료 (실제 입찰 문서 — 업로드 금지)
+# 실제 입찰 문서·검토 결과 (업로드 금지)
 Sample/
 sample/
 examples/
-
-# 생성물 (검토 산출물)
 output/
-extracted/
 *_검토메모*.hwpx
-.rfp-review/
-facts.json
-numeric_findings.json
-review.json
-review_notes.md
-*.findings.json
-
-# 구매팀에서 받은 실제 검토 자료
 RE_ RE_ *.zip
 
-# 세션/도구 상태 (개인 작업 흔적 — 업로드 금지)
-.omc/
+# 도구 상태
+.gjc/
 .claude/
 .codex/
-.gjc/
+.omc/
 
 # Python
 __pycache__/
-.ruff_cache/
 *.pyc
-*.pyo
-.venv/
-venv/
 
 # OS
 Thumbs.db
