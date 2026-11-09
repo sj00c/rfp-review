@@ -441,6 +441,9 @@ def annotate(a, findings, others, zin):
     records = []  # 번호 재정렬용 (문서 위치, fieldBegin)
 
     for f in findings:
+        if re.search(r"머리말|꼬리말|각주|미주", f["위치"]):  # 메모를 달 수 없는 영역: 본문의 같은 문구에 잘못 달지 않는다
+            unanchored.append(f)
+            continue
         hints = para_hint(f)
         order = [x for x in paras if x[0] in hints] + [x for x in paras if x[0] not in hints]
         hit = None
