@@ -4,7 +4,6 @@ sample/
 examples/
 output/
 *_검토메모*.hwpx
-RE_ RE_ *.zip
 
 # 도구 상태
 .gjc/

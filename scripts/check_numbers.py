@@ -42,12 +42,16 @@ def evaluate(value):
     if not isinstance(value, str):
         raise ValueError(f"숫자가 아님: {value!r}")
 
+    src = value.replace(",", "").strip()
+
     def ev(node):
         if isinstance(node, ast.Expression):
             return ev(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
-                and not isinstance(node.value, bool):
-            return Fraction(str(node.value))
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            return Fraction(node.value)
+        if isinstance(node, ast.Constant) and type(node.value) is float:
+            # float을 거치지 않고 적힌 숫자 그대로 분수로 만든다(17자리 이상도 정확)
+            return Fraction(ast.get_source_segment(src, node).replace("_", ""))
         if isinstance(node, ast.BinOp) and type(node.op) in OPS:
             return OPS[type(node.op)](ev(node.left), ev(node.right))
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
@@ -56,7 +60,7 @@ def evaluate(value):
         raise ValueError(f"사칙연산 식이 아님: {value!r}")
 
     try:
-        return ev(ast.parse(value.replace(",", "").strip(), mode="eval"))
+        return ev(ast.parse(src, mode="eval"))
     except (SyntaxError, ZeroDivisionError) as e:
         raise ValueError(f"계산할 수 없는 값: {value!r} ({e})") from e
 
@@ -77,12 +81,25 @@ def finding(n, entry, 요약, 문제점, 수정안, 근거):
             "원문": entry["원문"], "요약": 요약, "문제점": 문제점, "수정안": 수정안, "근거": 근거}
 
 
+ENTRY = ("문서", "위치", "원문", "값")
+
+
+def entries(c, key):
+    """c[key]의 항목들. 문서·위치·원문·값이 모두 있어야 한다(KeyError로 알린다)."""
+    items = c[key] if isinstance(c[key], list) else [c[key]]
+    for e in items:
+        missing = [k for k in ENTRY if k not in e]
+        if missing:
+            raise KeyError(f"{key} 항목에 {', '.join(missing)} 없음")
+    return items
+
+
 def check(facts):
     out, errors = [], []
     for c in facts.get("일치", []):
         name, basis = c.get("항목", "값 일치"), (c.get("근거") or SELF)
         try:
-            vals = [(e, evaluate(e["값"])) for e in c["값"]]
+            vals = [(e, evaluate(e["값"])) for e in entries(c, "값")]
         except (KeyError, TypeError, ValueError) as e:
             errors.append(f"{name}: {e}")
             continue
@@ -100,8 +117,8 @@ def check(facts):
     for c in facts.get("합계", []):
         name, basis = c.get("항목", "합계"), (c.get("근거") or SELF)
         try:
-            parts = [evaluate(e["값"]) for e in c["부분"]]
-            total_entry = c["합계"]
+            parts = [evaluate(e["값"]) for e in entries(c, "부분")]
+            total_entry = entries(c, "합계")[0]
             stated = evaluate(total_entry["값"])
         except (KeyError, TypeError, ValueError) as e:
             errors.append(f"{name}: {e}")

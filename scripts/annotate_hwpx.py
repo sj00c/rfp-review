@@ -2,9 +2,9 @@
 """검토 결과를 HWPX 문서에 한/글 '메모'와 형광펜으로 단다.
 
 - 지적한 원문 위치에 형광펜을 칠하고 그 범위에 메모(문제·수정안·근거)를 단다.
-- 첫 문단에는 요약 메모를 단다. 위치를 못 찾은 지적은 그 요약 메모에 싣는다.
+- 첫 문단에는 요약 메모를 단다. 위치를 못 찾은 지적과 다른 문서(--doc 외)의 지적은 그 요약 메모에 싣는다.
 - 원본은 건드리지 않는다. 결과는 새 파일이며, 같은 이름이 있으면 _2, _3…을 붙인다.
-- 검토본에서는 문서 스크립트(Scripts/*.js)를 뺀다. 스크립트가 든 HWPX에 메모를 넣으면
+- 검토본에서는 문서 스크립트(Scripts/)를 뺀다. 스크립트가 든 HWPX에 메모를 넣으면
   한/글이 '손상되었거나 변조되었을 가능성' 경고를 띄우며 열지 않는 경우가 있다.
 
 메모 구조는 한/글이 저장한 파일과 같다: 본문 run 안의
@@ -22,7 +22,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 import zipfile
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
@@ -42,12 +41,12 @@ def local(tag):
 
 
 def load_findings(paths, doc):
-    """이 문서(--doc)의 수정필요·확인필요 지적을 파일 순서대로."""
-    out = []
+    """(이 문서의 지적, 다른 문서의 지적). 다른 문서는 메모를 달 HWPX가 없으므로 요약 메모에 싣는다."""
+    every = []
     for p in paths:
         with open(p, encoding="utf-8") as fp:
-            out += [f for f in json.load(fp)["findings"] if f["문서"] == doc and f["판정"] in COLOR]
-    return out
+            every += [f for f in json.load(fp)["findings"] if f["판정"] in COLOR]
+    return [f for f in every if f["문서"] == doc], [f for f in every if f["문서"] != doc]
 
 
 def para_hint(f):
@@ -57,16 +56,17 @@ def para_hint(f):
 
 def strip_scripts(names, read):
     """문서 스크립트 파일과 content.hpf의 해당 item·itemref를 뺀다. (뺄 파일, {이름: 바뀐 바이트})"""
-    scripts = {n for n in names if re.match(r"Scripts/.*\.js$", n, re.I)}
+    scripts = {n for n in names if n.startswith("Scripts/") and not n.endswith("/")}
     hpf_name = "Contents/content.hpf"
     if not scripts or hpf_name not in names:
         return scripts, {}
     hpf = read(hpf_name).decode("utf-8")
-    item = r'<opf:item\b[^>]*href="Scripts/[^"]+"[^>]*/>'
+    item = r"""<(?:\w+:)?item\b[^>]*\bhref=["']Scripts/[^"']+["'][^>]*/>"""
     for tag in re.findall(item, hpf):
-        rid = re.search(r'\bid="([^"]+)"', tag)
+        rid = re.search(r"""\bid=["']([^"']+)["']""", tag)
         if rid:
-            hpf = re.sub(r'<opf:itemref\b[^>]*idref="%s"[^>]*/>' % re.escape(rid.group(1)), "", hpf)
+            ref = r"""<(?:\w+:)?itemref\b[^>]*\bidref=["']%s["'][^>]*/>""" % re.escape(rid.group(1))
+            hpf = re.sub(ref, "", hpf)
     return scripts, {hpf_name: re.sub(item, "", hpf).encode("utf-8")}
 
 
@@ -75,20 +75,15 @@ def publish(data, path):
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
     stem, ext = os.path.splitext(os.path.basename(path))
-    fd, tmp = tempfile.mkstemp(prefix=".annotate-", suffix=ext, dir=folder)
-    try:
-        with os.fdopen(fd, "wb") as fp:
-            fp.write(data)
-        for n in range(1, 1000):
-            dest = os.path.join(folder, f"{stem}_{n}{ext}" if n > 1 else stem + ext)
-            try:
-                os.link(tmp, dest)  # 이미 있으면 실패한다: 원자적으로 덮어쓰지 않는다
-                return dest
-            except FileExistsError:
-                continue
-        raise FileExistsError(f"빈 이름을 찾지 못했습니다: {path}")
-    finally:
-        os.unlink(tmp)
+    for n in range(1, 1000):
+        dest = os.path.join(folder, f"{stem}_{n}{ext}" if n > 1 else stem + ext)
+        try:
+            with open(dest, "xb") as fp:  # 'x': 이미 있으면 실패한다. 기존 파일을 덮어쓰지 않는다
+                fp.write(data)
+            return dest
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"빈 이름을 찾지 못했습니다: {path}")
 
 
 # ------------------------------------------------------------------ 문단 토큰화
@@ -108,13 +103,10 @@ class Para:
                     if c.text:
                         for ch in c.text:
                             toks.append(("char", ch, attrib))
-                    for sub in c:
-                        tail = sub.tail
-                        sub.tail = None
+                    for sub in c:  # 하위 요소 뒤 글자(tail)는 토큰으로만 옮긴다. 트리는 rebuild()에서만 바꾼다
                         toks.append(("sub", sub, attrib))
-                        if tail:
-                            for ch in tail:
-                                toks.append(("char", ch, attrib))
+                        for ch in sub.tail or "":
+                            toks.append(("char", ch, attrib))
                 else:
                     toks.append(("ctrl", c, None))
             for ti, t in enumerate(toks):
@@ -226,6 +218,7 @@ class Para:
                     else:
                         last_sub.tail = (last_sub.tail or "") + val
                 else:
+                    val.tail = None
                     cur.append(val)
                     last_sub = val
         # 레이아웃 캐시 제거: 한/글이 열 때 다시 계산한다
@@ -373,12 +366,20 @@ def main():
     if not a.hwpx.lower().endswith(".hwpx"):
         print("[중단] HWPX 파일만 메모를 달 수 있습니다. 한/글에서 '다른 이름으로 저장 → HWPX'로 저장해 주세요.")
         return 2
-    findings = load_findings(a.findings, a.doc)
-    with zipfile.ZipFile(a.hwpx) as zin:
-        return annotate(a, findings, zin)
+    findings, others = load_findings(a.findings, a.doc)
+    if others and not findings:
+        print(f"[중단] --doc '{a.doc}'의 지적이 없습니다. findings의 문서 값: {', '.join(sorted({f['문서'] for f in others}))}")
+        return 2
+    try:
+        zin = zipfile.ZipFile(a.hwpx)
+    except (OSError, zipfile.BadZipFile) as e:
+        print(f"[중단] HWPX를 열지 못했습니다: {a.hwpx} ({e})")
+        return 2
+    with zin:
+        return annotate(a, findings, others, zin)
 
 
-def annotate(a, findings, zin):
+def annotate(a, findings, others, zin):
     sec_names = sorted([n for n in zin.namelist() if re.match(r"Contents/section\d+\.xml$", n)],
                        key=lambda n: int(re.findall(r"\d+", n)[-1]))
     if not sec_names:
@@ -468,10 +469,10 @@ def annotate(a, findings, zin):
         anchored.append((f, num))
 
     # 검토 요약 메모: 첫 문단 앞부분에 단다
-    every = [f for f, _ in anchored] + unanchored
+    every = [f for f, _ in anchored] + unanchored + others
     n_req = sum(1 for f in every if f["판정"] == "수정필요")
     n_chk = len(every) - n_req
-    head = f"이 문서에 고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + "에 메모를 달았습니다."
+    head = f"고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + "에 메모를 달았습니다."
     summary = ["[RFP 검토 요약] AI 1차 검토 결과입니다. 최종 판단은 담당자가 합니다.", head]
     # 문서 순서대로 제목만 모아 한눈에 보이게 한다. 위치를 못 찾은 지적은 본문까지 여기 싣는다.
     ordered = [f for f, _ in sorted(anchored, key=lambda x: x[1])]
@@ -485,6 +486,11 @@ def annotate(a, findings, zin):
         for f in unanchored:
             lines = memo_lines(f)
             summary += [f" ({f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
+    if others:
+        summary += ["", f"■ 다른 문서의 지적 {len(others)}건 (해당 문서에서 고쳐 주세요)"]
+        for f in others:
+            lines = memo_lines(f)
+            summary += [f" ({f['문서']} {f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
     summary += ["", "■ 처리 방법",
                 " - 노란 형광펜: 고친 뒤 메모 삭제",
                 " - 파란 형광펜: 확인한 내용을 메모에 답변",
@@ -496,8 +502,8 @@ def annotate(a, findings, zin):
         starts = [fs for fs, fe in P.fields if 0 < fs < k] + [r[0] for r in P.ranges if 0 < r[0] < k]
         if starts:
             k = min(starts)
-        _, k = P.fit(0, k)
-        overlap = P.overlapping(0, k)
+        s0, k = P.fit(0, k)
+        overlap = P.overlapping(s0, k)
         if overlap:  # 첫 글자부터 지적 메모가 있으면 그 메모 앞쪽에 요약을 넣는다
             first = list(overlap[2])
             for c in first:
@@ -508,8 +514,8 @@ def annotate(a, findings, zin):
         else:
             begin, end, sl = factory.make(summary)
             records.append(((0, -1), begin[0]))
-            P.inserts += [(0, 0, -1, ("ctrl", begin, None)), (k - 1, 1, 10, ("ctrl", end, None))]
-            P.ranges.append((0, k, sl))
+            P.inserts += [(s0, 0, -1, ("ctrl", begin, None)), (k - 1, 1, 10, ("ctrl", end, None))]
+            P.ranges.append((s0, k, sl))
     factory.renumber(records)
 
     for P in para_obj.values():
@@ -535,7 +541,8 @@ def annotate(a, findings, zin):
     out = publish(buf.getvalue(), a.out)
 
     print(f"저장: {out}")
-    print(f"메모 {len(anchored)}건 + 요약 메모 1건 (위치 못 찾음 {len(unanchored)}건)")
+    print(f"메모 {len(anchored)}건 + 요약 메모 1건 (위치 못 찾음 {len(unanchored)}건, 다른 문서 {len(others)}건)")
+    print(f"합계: 수정필요 {n_req}건, 확인필요 {n_chk}건")
     if scripts:
         print(f"문서 스크립트 {len(scripts)}개를 검토본에서 뺐습니다.")
     # 위치를 못 찾은 것을 먼저, 정상 메모는 20건까지만(하네스 출력 잘림 방지)

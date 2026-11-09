@@ -24,7 +24,8 @@ import xml.etree.ElementTree as ET
 
 
 def clean(s):
-    return re.sub(r"[ \t\u00a0]+", " ", s).strip()
+    """공백·줄바꿈을 한 칸으로. 셀 안 줄바꿈이 남으면 위치 표시 없는 줄이 생겨 인용 검사가 깨진다."""
+    return re.sub(r"\s+", " ", s).strip()
 
 
 # ------------------------------------------------------------------ HWPX
@@ -33,7 +34,7 @@ def from_hwpx(path):
     with zipfile.ZipFile(path) as z:
         secs = sorted([n for n in z.namelist() if re.match(r"Contents/section\d+\.xml$", n)],
                       key=lambda n: int(re.findall(r"\d+", n)[-1]))
-        state = {"n": 0, "tbl": 0}
+        state = {"n": 0, "tbl": 0, "memo": 0}
 
         def walk(el, cell):
             tag = el.tag.rsplit("}", 1)[-1]
@@ -42,6 +43,13 @@ def from_hwpx(path):
                 tno = state["tbl"]
                 for ch in el:
                     walk(ch, (tno, None))
+                return
+            if tag == "fieldBegin":
+                # 기존 메모·누름틀 안 문단: 번호는 annotate_hwpx와 맞춰 세되 RFP 본문으로 내보내지 않는다
+                state["memo"] += 1
+                for ch in el:
+                    walk(ch, cell)
+                state["memo"] -= 1
                 return
             if tag == "tc" and cell:
                 addr = next((c for c in el if c.tag.endswith("}cellAddr")), None)
@@ -58,7 +66,10 @@ def from_hwpx(path):
                     for t in run:
                         kind = t.tag.rsplit("}", 1)[-1]
                         if kind == "t":
-                            parts.append("".join(t.itertext()))
+                            parts.append(t.text or "")
+                            for sub in t:  # 탭·줄바꿈 표시는 글자가 없다. 빼면 앞뒤 단어가 붙는다
+                                parts.append(" " if sub.tag.rsplit("}", 1)[-1] in ("tab", "lineBreak") else "")
+                                parts.append(sub.tail or "")
                         elif kind == "equation":
                             # 수식은 본문 글자가 아니라 개체다. 빼면 평점산식 등이 '공란'으로 보여 허위 지적이 나온다.
                             sc = next((x for x in t if x.tag.endswith("}script")), None)
@@ -70,8 +81,9 @@ def from_hwpx(path):
                 if txt:
                     state["n"] += 1
                     # 표 안 문단에는 표 번호와 행-열을 붙인다. 없으면 모델이 배점·등급을 다른 항목에 잘못 붙인다.
-                    out.append(f"[문단 {state['n']}{where}] {' '.join([txt] + objs)}")
-                elif objs:
+                    if not state["memo"]:
+                        out.append(f"[문단 {state['n']}{where}] {' '.join([txt] + objs)}")
+                elif objs and not state["memo"]:
                     # 글자 없는 문단은 번호를 매기지 않는다(annotate_hwpx와 번호를 맞춘다). 개체만 알린다.
                     out.append(f"[문단 {state['n']} 뒤{where}] {' '.join(objs)}")
             for ch in el:
@@ -270,7 +282,7 @@ def from_xlsx(path):
                 for c in row.iter(X + "c"):
                     kind, v, f = c.get("t"), c.find(X + "v"), c.find(X + "f")
                     if kind == "inlineStr":
-                        text = "".join(t.text or "" for t in c.iter(X + "t"))
+                        text = "".join(t.text or "" for t in c.findall(f"{X}is/{X}t") + c.findall(f"{X}is/{X}r/{X}t"))
                     elif v is None:
                         # 계산값이 저장되지 않은 수식은 빈 칸이 아니다. 수식을 그대로 보여 준다.
                         text = f"={f.text}(계산값 없음)" if f is not None and f.text else ""
