@@ -68,7 +68,7 @@ def from_hwpx(path):
                         if kind == "t":
                             parts.append(t.text or "")
                             for sub in t:  # 탭·줄바꿈 표시는 글자가 없다. 빼면 앞뒤 단어가 붙는다
-                                parts.append(" " if sub.tag.rsplit("}", 1)[-1] in ("tab", "lineBreak") else "")
+                                parts.append(" " if sub.tag.rsplit("}", 1)[-1] in ("tab", "lineBreak", "nbSpace", "fwSpace") else "")
                                 parts.append(sub.tail or "")
                         elif kind == "equation":
                             # 수식은 본문 글자가 아니라 개체다. 빼면 평점산식 등이 '공란'으로 보여 허위 지적이 나온다.

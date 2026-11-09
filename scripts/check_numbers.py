@@ -87,6 +87,8 @@ ENTRY = ("문서", "위치", "원문", "값")
 def entries(c, key):
     """c[key]의 항목들. 문서·위치·원문·값이 모두 있어야 한다(KeyError로 알린다)."""
     items = c[key] if isinstance(c[key], list) else [c[key]]
+    if not items:
+        raise KeyError(f"{key}이(가) 비어 있음")
     for e in items:
         missing = [k for k in ENTRY if k not in e]
         if missing:

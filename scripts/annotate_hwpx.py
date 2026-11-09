@@ -78,11 +78,16 @@ def publish(data, path):
     for n in range(1, 1000):
         dest = os.path.join(folder, f"{stem}_{n}{ext}" if n > 1 else stem + ext)
         try:
-            with open(dest, "xb") as fp:  # 'x': 이미 있으면 실패한다. 기존 파일을 덮어쓰지 않는다
-                fp.write(data)
-            return dest
+            fp = open(dest, "xb")  # 'x': 이미 있으면 실패한다. 기존 파일을 덮어쓰지 않는다
         except FileExistsError:
             continue
+        try:
+            with fp:
+                fp.write(data)
+        except BaseException:
+            os.remove(dest)  # 쓰다 실패한 반쪽 파일을 결과로 남기지 않는다
+            raise
+        return dest
     raise FileExistsError(f"빈 이름을 찾지 못했습니다: {path}")
 
 
@@ -407,8 +412,10 @@ def annotate(a, findings, others, zin):
     # extract_text.py와 같은 순서로 문단 번호를 매긴다
     paras, n = [], 0
     fields = [fb for s in sections for fb in s["root"].iter(HP + "fieldBegin")]
-    # 기존 메모 내용 문단: 번호는 매기되 메모는 달지 않는다
-    in_memo = {id(q) for fb in fields for q in fb.iter(HP + "p")}
+    # 기존 메모·머리말·꼬리말·각주 안 문단: 번호는 매기되 메모는 달지 않는다
+    nested = fields + [el for s in sections for el in s["root"].iter()
+                       if local(el.tag) in ("header", "footer", "footNote", "endNote")]
+    in_memo = {id(q) for el in nested for q in el.iter(HP + "p")}
     max_z = max([int(fb.get("zorder")) for fb in fields
                  if fb.get("type") == "MEMO" and (fb.get("zorder") or "").isdigit()] or [0])
     for s in sections:
@@ -472,7 +479,8 @@ def annotate(a, findings, others, zin):
     every = [f for f, _ in anchored] + unanchored + others
     n_req = sum(1 for f in every if f["판정"] == "수정필요")
     n_chk = len(every) - n_req
-    head = f"고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + "에 메모를 달았습니다."
+    head = f"고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + \
+        (f"입니다. 이 중 {len(every) - len(anchored)}건은 본문에 표시하지 못해 아래에 적었습니다." if len(every) > len(anchored) else "입니다.")
     summary = ["[RFP 검토 요약] AI 1차 검토 결과입니다. 최종 판단은 담당자가 합니다.", head]
     # 문서 순서대로 제목만 모아 한눈에 보이게 한다. 위치를 못 찾은 지적은 본문까지 여기 싣는다.
     ordered = [f for f, _ in sorted(anchored, key=lambda x: x[1])]
