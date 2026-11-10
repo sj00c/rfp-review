@@ -82,7 +82,7 @@ It outputs only mismatches. If a result contradicts the source (a value read wro
 ]}
 ```
 - `id`: `R1`, `R2` … (`N…` is used by check_numbers). `문서` is the document name used with `--doc` below. Put findings on the RFP whenever the problem is in the RFP; for a contradiction with another document, quote the RFP side and name the other side in `문제점`. Findings on other documents are listed in the RFP's summary memo. One finding per location; the same problem in two places is two findings.
-- `요약`: one short line, the memo title. `수정안`: text the author can paste, or for 확인필요 what to confirm. Do not invent legal wording.
+- Keep memos short: `요약` is the memo title (≤ 25자). `문제점` one sentence (≤ 80자). `수정안` the text to paste or, for 확인필요, what to confirm (≤ 100자). `근거` the shortest guideline line that proves it. Longer text is cut with `…`. Do not invent legal wording.
 - Quote at least 4 characters next to the problem; never quote `[수식…]`/`[그림]` markers.
 
 ### 6. Validate (repeat until 0 errors)
@@ -96,7 +96,7 @@ On the RFP:
 ```bash
 python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json review.json --doc 제안요청서 -o "<output>/<원본stem>_검토메모.hwpx"
 ```
-- Red = 필수수정, yellow = 수정필요, blue = 확인필요. The summary memo on the first paragraph also carries findings it cannot place and findings on other documents, with their location.
+- Every quote gets a yellow highlight; the memo balloon color shows urgency: red = 필수수정, yellow = 수정필요, blue = 확인필요, grey = summary. The summary memo on the first paragraph also carries findings it cannot place and findings on other documents, with their location.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
 - Findings whose `위치` has 머리말/꼬리말/각주/미주 always go to the summary memo (`요약 메모로`); that is final. Any other `요약 메모로` line means the quote was not matched in the HWPX: shorten it to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
 - The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos.

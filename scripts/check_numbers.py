@@ -111,12 +111,11 @@ def check(facts):
             continue
         if len({x for _, x in vals}) == 1:
             continue
-        listing = "; ".join(entry_text(e, x) for e, x in vals)
         for e, x in vals:
-            others = "; ".join(entry_text(o, y) for o, y in vals if o is not e)
+            others = ", ".join(entry_text(o, y) for o, y in vals if o is not e)
             out.append(finding(len(out) + 1, c, e, f"{name} 불일치",
-                               f"같아야 할 {name} 값이 문서마다 다릅니다. 이곳 {show(x)}, 다른 곳: {others}",
-                               f"맞는 값을 확인해 모든 곳({listing})을 같은 값으로 맞춰 주세요.", basis))
+                               f"이곳 {show(x)}, 다른 곳 {others}",
+                               "맞는 값으로 모든 곳을 통일", basis))
     for c in facts.get("합계", []):
         name, basis = c.get("항목", "합계"), (c.get("근거") or SELF)
         try:
@@ -130,8 +129,8 @@ def check(facts):
         if computed == stated:
             continue
         out.append(finding(len(out) + 1, c, total_entry, f"{name} 계산 오류",
-                           f"{name}: 세부 값 {len(parts)}개의 합은 {show(computed)}이지만 적힌 합계는 {show(stated)}입니다.",
-                           f"세부 값과 합계를 확인해 맞춰 주세요(계산 합계 {show(computed)}).", basis))
+                           f"세부 {len(parts)}개 합 {show(computed)}, 적힌 합계 {show(stated)}",
+                           f"세부 값과 합계를 맞춤(계산 합계 {show(computed)})", basis))
     return out, errors
 
 

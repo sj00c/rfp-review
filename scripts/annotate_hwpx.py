@@ -12,6 +12,7 @@
   지적한 텍스트
   <hp:ctrl><hp:fieldEnd .../></hp:ctrl>
 형광펜: <hp:t>…<hp:markpenBegin color="#FFFF00"/>지적한 텍스트<hp:markpenEnd/>…</hp:t>
+메모 색: header.xml의 <hh:memoProperties>에 중요도별 <hh:memoPr>를 더하고 MemoShapeIDRef로 가리킨다.
 
 사용법:
   python annotate_hwpx.py 제안요청서.hwpx numeric_findings.json review.json --doc 제안요청서 -o output/제안요청서_검토메모.hwpx
@@ -31,7 +32,13 @@ HP = "{%s}" % HP_NS
 MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 623209829, 한/글이 메모 필드에 쓰는 값
 # 판정 = 중요도. 순서대로 위급 → 확인. 빨강: 그대로 두면 공고가 위법·무효가 되거나 다툼이 생기는 곳
 VERDICTS = ("필수수정", "수정필요", "확인필요")
-COLOR = {"필수수정": "#FF7F7F", "수정필요": "#FFFF00", "확인필요": "#9FE2FF"}
+HIGHLIGHT = "#FFFF00"  # 형광펜은 한 색. 중요도는 메모 풍선 색으로 구분한다
+# 메모 풍선 (배경, 테두리, 선택했을 때 배경). "요약"은 첫 문단의 검토 요약 메모
+MEMO_COLOR = {"필수수정": ("#FFE1E1", "#E04848", "#FFC2C2"),
+              "수정필요": ("#FFF4C2", "#D9A400", "#FFE88A"),
+              "확인필요": ("#E1EFFF", "#4A86D9", "#C2DCFF"),
+              "요약": ("#F2F2F2", "#8C8C8C", "#E0E0E0")}
+DEFAULT_SHAPE = "65535"  # 한/글 기본 메모 모양
 LABEL = {"필수수정": "필수 수정", "수정필요": "수정 필요", "확인필요": "확인 요청"}
 SELF = "문서 자체 오류"
 MEMO_SEP = "─" * 16  # 한 메모에 합친 지적 사이 구분선
@@ -47,7 +54,7 @@ def load_findings(paths, doc):
     every = []
     for p in paths:
         with open(p, encoding="utf-8") as fp:
-            every += [f for f in json.load(fp)["findings"] if f["판정"] in COLOR]
+            every += [f for f in json.load(fp)["findings"] if f["판정"] in VERDICTS]
     return [f for f in every if f["문서"] == doc], [f for f in every if f["문서"] != doc]
 
 
@@ -259,9 +266,13 @@ class MemoFactory:
                 elif name == "ID":
                     prm.text = f"rfpreview{num}"
                 elif name == "Command":
-                    prm.text = f"MEMO/65535/{num}/{self.ft_lo}/{self.ft_hi}//\\;;"
+                    shape = prm.text.split("/")[1]
+                    prm.text = f"MEMO/{shape}/{num}/{self.ft_lo}/{self.ft_hi}//\\;;"
 
-    def make(self, lines):
+    SHAPE = {}  # 판정 → memoPr id. annotate()에서 header.xml에 추가한 뒤 채운다
+
+    def make(self, lines, kind):
+        shape = self.SHAPE.get(kind, DEFAULT_SHAPE)
         self.n += 1
         while True:  # 문서에 이미 있는 필드 id와 겹치면 fieldEnd가 엉뚱한 필드를 닫는다
             self.seq += 1
@@ -276,11 +287,11 @@ class MemoFactory:
         ps = ET.SubElement(fb, HP + "parameters", {"cnt": "7", "name": ""})
         ET.SubElement(ps, HP + "integerParam", {"name": "Prop"}).text = "0"
         ET.SubElement(ps, HP + "stringParam", {"name": "Command"}).text = \
-            f"MEMO/65535/{self.n}/{self.ft_lo}/{self.ft_hi}//\\;;"
+            f"MEMO/{shape}/{self.n}/{self.ft_lo}/{self.ft_hi}//\\;;"
         ET.SubElement(ps, HP + "stringParam", {"name": "ID"}).text = f"rfpreview{self.n}"
         ET.SubElement(ps, HP + "integerParam", {"name": "Number"}).text = str(self.n)
         ET.SubElement(ps, HP + "stringParam", {"name": "Author"}).text = self.author
-        ET.SubElement(ps, HP + "stringParam", {"name": "MemoShapeIDRef"}).text = "65535"
+        ET.SubElement(ps, HP + "stringParam", {"name": "MemoShapeIDRef"}).text = shape
         ET.SubElement(ps, HP + "stringParam", {"name": "CreateDateTime"}).text = self.created
         sl = ET.SubElement(fb, HP + "subList", {
             "id": "", "textDirection": "HORIZONTAL", "lineWrap": "BREAK", "vertAlign": "TOP",
@@ -325,20 +336,15 @@ def title(f):
 
 
 def memo_lines(f):
-    """메모 본문. 작성자가 메모만 보고 고치거나 답할 수 있어야 한다:
-      [수정 필요] 요약
-      ■ 현재 문구 / ■ 문제(확인이 필요한 이유) / ■ 이렇게 고쳐 주세요(확인해 주세요) / ■ 근거"""
-    check = f["판정"] == "확인필요"
-    lines = [f"[{LABEL[f['판정']]}] {title(f)}", "■ 현재 문구", f' "{clip(f["원문"], 90)}"']
-    probs = [s for s in bullets(f["문제점"], 4) if WS.sub("", s) != WS.sub("", title(f))]
+    """짧은 메모: 제목 + 문제·수정·근거 각 한 줄. 지적한 문구는 형광펜으로 보이므로 다시 싣지 않는다."""
+    lines = [f"[{LABEL[f['판정']]}] {title(f)}"]
+    probs = [s for s in bullets(f["문제점"], 2) if WS.sub("", s) != WS.sub("", title(f))]
     if probs:
-        lines += ["■ 확인이 필요한 이유" if check else "■ 문제"] + [f" - {s}" for s in probs]
-    lines += ["■ 확인해 주세요" if check else "■ 이렇게 고쳐 주세요"] + [f" - {s}" for s in bullets(f["수정안"], 6)]
+        lines.append("문제: " + clip(" ".join(probs), 80))
+    lines.append(("확인: " if f["판정"] == "확인필요" else "수정: ") + clip(" ".join(bullets(f["수정안"], 3)), 100))
     basis = f["근거"].strip()
-    if basis == SELF:
-        lines += ["■ 근거", " - 문서 내용 대조(오타·빈칸·불일치)"]
-    else:
-        lines += ["■ 근거(검토 지침)"] + [f' - "{clip(b, 120)}"' for b in re.split(r"\s+/\s+", basis)[:3]]
+    first = re.split(r"\s+/\s+", basis)[0]
+    lines.append("근거: " + ("문서 내용 대조" if basis == SELF else f'"{clip(first, 60)}"'))
     return lines
 
 
@@ -360,6 +366,28 @@ def add_memo_para_pr(header):
     m_props = re.search(r'(<hh:paraProperties\b[^>]*\bitemCnt=")(\d+)(")', out)
     out = out[:m_props.start(2)] + str(int(m_props.group(2)) + 1) + out[m_props.end(2):]
     return out, new_id
+
+
+def add_memo_shapes(header):
+    """중요도별 메모 모양(hh:memoPr)을 header의 hh:memoProperties에 더한다(없으면 refList 끝에 만든다).
+    header 텍스트를 직접 고쳐 나머지는 바이트 그대로 둔다. (새 header, {판정: id}) 또는 (원문, {})."""
+    ref_end = header.find("</hh:refList>")
+    if ref_end < 0:
+        return header, {}
+    ids = [int(x) for x in re.findall(r'<hh:memoPr\b[^>]*\bid="(\d+)"', header)]
+    start = max(ids) + 1 if ids else 0
+    shapes, items = {}, ""
+    for i, (kind, (fill, line, active)) in enumerate(MEMO_COLOR.items()):
+        shapes[kind] = str(start + i)
+        items += (f'<hh:memoPr id="{start + i}" width="15591" lineWidth="0.6mm" lineType="SOLID" '
+                  f'lineColor="{line}" fillColor="{fill}" activeColor="{active}" memoType="NOMAL"/>')
+    m = re.search(r'(<hh:memoProperties\b[^>]*\bitemCnt=")(\d+)("[^>]*>)', header)
+    if m:
+        end = header.index("</hh:memoProperties>", m.end())
+        out = header[:end] + items + header[end:]
+        return out[:m.start(2)] + str(int(m.group(2)) + len(MEMO_COLOR)) + out[m.end(2):], shapes
+    block = f'<hh:memoProperties itemCnt="{len(MEMO_COLOR)}">{items}</hh:memoProperties>'
+    return header[:ref_end] + block + header[ref_end:], shapes
 
 
 def main():
@@ -402,6 +430,10 @@ def annotate(a, findings, others, zin):
         if pid is not None:
             changed["Contents/header.xml"] = hdr.encode("utf-8")
             MemoFactory.PARA_PR = pid
+        hdr, shapes = add_memo_shapes(changed.get("Contents/header.xml", zin.read("Contents/header.xml")).decode("utf-8"))
+        if shapes:
+            changed["Contents/header.xml"] = hdr.encode("utf-8")
+            MemoFactory.SHAPE = shapes
 
     # 섹션 파싱 (네임스페이스 접두어와 루트 선언을 보존한다)
     sections = []
@@ -467,9 +499,9 @@ def annotate(a, findings, others, zin):
         if prev:  # 같은 범위에 이미 메모가 있으면 내용을 이어 붙인다
             MemoFactory.add_lines(prev[2], ["", MEMO_SEP] + lines)
         else:
-            begin, end, sl = factory.make(lines)
+            begin, end, sl = factory.make(lines, f["판정"])
             records.append(((num, s), begin[0]))
-            color = COLOR[f["판정"]]
+            color = HIGHLIGHT
             P.inserts += [(s, 0, 0, ("ctrl", begin, None)), (e - 1, 1, 9, ("ctrl", end, None))]
             # 형광펜: run마다 따로 열고 닫는다
             runs_hit = {}
@@ -508,9 +540,9 @@ def annotate(a, findings, others, zin):
             lines = memo_lines(f)
             summary += [f" ({f['문서']} {f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
     summary += ["", "■ 처리 방법",
-                " - 빨간 형광펜(필수 수정): 공고 전에 반드시 고친 뒤 메모 삭제",
-                " - 노란 형광펜(수정 필요): 고친 뒤 메모 삭제",
-                " - 파란 형광펜(확인 요청): 확인한 내용을 메모에 답변",
+                " - 빨간 메모(필수 수정): 공고 전에 반드시 고친 뒤 메모 삭제",
+                " - 노란 메모(수정 필요): 고친 뒤 메모 삭제",
+                " - 파란 메모(확인 요청): 확인한 내용을 메모에 답변",
                 " - 고치지 않을 곳: 메모에 사유 작성"]
     if paras:
         P = get_para(paras[0][2])
@@ -529,7 +561,7 @@ def annotate(a, findings, others, zin):
             for c in first:
                 overlap[2].append(c)
         else:
-            begin, end, sl = factory.make(summary)
+            begin, end, sl = factory.make(summary, "요약")
             records.append(((0, -1), begin[0]))
             P.inserts += [(s0, 0, -1, ("ctrl", begin, None)), (k - 1, 1, 10, ("ctrl", end, None))]
             P.ranges.append((s0, k, sl))
