@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """검토 대상 문서를 위치 표시가 붙은 텍스트로 변환한다.
 
-지원: .hwpx .hwp(HWP 5.x, 배포용/암호 문서 제외) .docx .xlsx .xlsm .txt .md (표준 라이브러리만 사용)
-PDF는 읽지 않는다: 원본을 HWPX·DOCX로 저장하거나 텍스트를 복사한 .txt를 받는다.
-출력: <출력폴더>/<파일명>.txt  — 각 줄 앞에 [문단 n] / [시트!n행] / [줄 n] 위치 표시
+지원: .hwpx .hwp(HWP 5.x, 배포용/암호 문서 제외) .docx .xlsx .xlsm .txt .md — 표준 라이브러리만 사용
+      .pdf — pdfplumber 또는 pypdf가 설치돼 있을 때만(`pip install pypdf`). 스캔 PDF는 글자가 없어 읽지 못한다.
+출력: <출력폴더>/<파일명>.txt  — 각 줄 앞에 [문단 n] / [p.쪽] / [시트!n행] / [줄 n] 위치 표시
 
 사용법:
   python extract_text.py 파일1 [파일2 ...] -o extracted/
@@ -252,6 +252,22 @@ def from_hwp(path):
     return out
 
 
+# ------------------------------------------------------------------ PDF (선택 패키지)
+def from_pdf(path):
+    try:
+        import pdfplumber  # 표·줄 순서를 더 잘 지킨다
+        with pdfplumber.open(path) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
+    except ImportError:
+        try:
+            from pypdf import PdfReader
+        except ImportError as e:
+            raise RuntimeError("PDF를 읽으려면 `pip install pypdf`가 필요합니다. "
+                               "아니면 원본(HWPX·DOCX·XLSX)이나 텍스트(.txt)를 받으세요.") from e
+        pages = [page.extract_text() or "" for page in PdfReader(path).pages]
+    return [f"[p.{n}] {clean(ln)}" for n, text in enumerate(pages, 1) for ln in text.splitlines() if clean(ln)]
+
+
 # ------------------------------------------------------------------ DOCX
 def from_docx(path):
     W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -314,7 +330,7 @@ def from_txt(path):
         return [f"[줄 {i}] {clean(ln)}" for i, ln in enumerate(fp, 1) if clean(ln)]
 
 
-READERS = {".hwpx": from_hwpx, ".hwp": from_hwp, ".docx": from_docx,
+READERS = {".hwpx": from_hwpx, ".hwp": from_hwp, ".pdf": from_pdf, ".docx": from_docx,
            ".xlsx": from_xlsx, ".xlsm": from_xlsx, ".txt": from_txt, ".md": from_txt}
 
 
@@ -368,7 +384,7 @@ def main():
     for f in a.files:
         ext = os.path.splitext(f)[1].lower()
         if ext not in READERS:
-            print(f"[건너뜀] {f}: 지원하지 않는 형식({ext}). HWPX·DOCX·XLSX·TXT로 저장해 주세요.")
+            print(f"[건너뜀] {f}: 지원하지 않는 형식({ext}). HWPX·DOCX·XLSX·PDF·TXT로 주세요.")
             ok = False
             continue
         try:
@@ -383,7 +399,8 @@ def main():
             fp.write(f"# 원본: {os.path.basename(f)}\n" + "\n".join(lines) + "\n")
         sources[name] = {"원본": os.path.abspath(f), "sha256": sha256(f)}
         chars = sum(len(ln) for ln in lines)
-        warn = ""
+        pages = len({ln.split("]")[0] for ln in lines})
+        warn = "  ※ 글자가 거의 없음: 스캔 PDF일 수 있습니다." if ext == ".pdf" and chars < 200 * max(1, pages) else ""
         if not lines:
             warn = "  ※ 읽은 내용이 없습니다. 빈 문서로 보고 검토하지 마세요."
             ok = False

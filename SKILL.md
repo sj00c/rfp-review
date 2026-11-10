@@ -14,7 +14,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 ## Inputs and paths
 - **지침** (required): the review guideline file the user gives — XLSX, HWPX/HWP, DOCX, TXT/MD. If none is given, ask for it. There is no built-in checklist.
 - **RFP** (required): the draft 제안요청서, `.hwpx` or `.hwp`. Memos can only be written into HWPX, so a `.hwp` RFP is converted first (step 1).
-- PDF and scanned images are not read. Ask for the original file (HWPX/DOCX/XLSX) or the text pasted into a `.txt`.
+- PDF is read only if `pdfplumber` or `pypdf` is installed; otherwise `[실패]` says so — ask for the original file (HWPX/DOCX/XLSX) or `.txt`. Scanned PDFs and images have no text and are not read.
 - Optional related documents (공고문, 원가계산서, 과업내용서 …): used only for cross-checks.
 - Output: `<RFP folder>/output/`, or the folder the user names. Never the skill folder or the shell cwd.
 - Work folder: `<output>/.rfp-review/<RFP stem>/`. All intermediates live there; run the commands below from that folder (relative paths below are inside it). Never modify the user's files.
@@ -43,7 +43,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --check -o <work>/extracted`. Exit 0: continue from the existing files. Exit 1 (an input changed or files missing): delete that work folder and start over — never reuse old notes or findings.
 
 ### 1. Convert and extract
-- RFP is `.hwp`: `python <skill-dir>/scripts/convert_to_hwpx.py <rfp.hwp> -o <work>/<stem>.hwpx` (Windows + 한/글; no packages), then use that HWPX everywhere below. If it prints `[변환 실패]`, ask the user to save the RFP as HWPX in 한/글 (파일 → 다른 이름으로 저장 → HWPX). Other `.hwp` documents are read directly; do not convert them.
+- RFP is `.hwp`: `python <skill-dir>/scripts/hancom.py convert <rfp.hwp> -o <work>/<stem>.hwpx` (Windows + 한/글; no packages), then use that HWPX everywhere below. If it prints `[실패]`, ask the user to save the RFP as HWPX in 한/글 (파일 → 다른 이름으로 저장 → HWPX). Other `.hwp` documents are read directly; do not convert them.
 - `python <skill-dir>/scripts/extract_text.py <guideline> <rfp.hwpx> [<other docs>] -o <work>/extracted`
 - Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[문단 3 머리말]` (also 꼬리말/각주/미주), `[시트!12행]`, `[줄 7]`. Put the tag in `위치`. Pair table values by row.
 - `읽은 내용이 없습니다` or `[실패]` means the file was not read: say so; do not review it as empty.
@@ -94,7 +94,8 @@ python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json rev
 - Red = 필수수정, yellow = 수정필요, blue = 확인필요. The summary memo on the first paragraph also carries findings it cannot place and findings on other documents, with their location.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
 - Findings whose `위치` has 머리말/꼬리말/각주/미주 always go to the summary memo (`요약 메모로`); that is final. Any other `요약 메모로` line means the quote was not matched in the HWPX: shorten it to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
-- The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos. Nothing here opens the file in 한/글 — do not claim it was checked in 한/글.
+- The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos.
+- On Windows with 한/글, check the result: `python <skill-dir>/scripts/hancom.py check <result.hwpx>` (`[열림] … n쪽`). If it fails, `hancom.py resave <result.hwpx> -o <result>_재저장.hwpx`, check that file, and give the user the one that opens. Without 한/글, say the file was not opened in 한/글.
 
 ### 8. Reply (Korean, short)
 - One line: 필수수정 n건, 수정필요 n건, 확인필요 n건 (from annotate's `합계:` line), noting it is an AI first-pass review. Then the 필수수정 titles, one per line.
