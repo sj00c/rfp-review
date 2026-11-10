@@ -12,7 +12,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 **Do not write your own scripts.** Write JSON and notes with your file-editing tool, not with generated Python or long heredocs; count and list results from the scripts' own output. The only scripts you run are the ones in `scripts/`.
 
 ## Inputs and paths
-- **지침** (required): the review guideline file the user gives — XLSX, HWPX/HWP, DOCX, TXT/MD. If none is given, ask for it. There is no built-in checklist.
+- **지침**: guideline files the user attaches, plus the guideline library (`RFP_GUIDES`, default `~/rfp-guides/`; step 2). Attached files are always used. If nothing is attached and the library is empty or missing, ask for a guideline. There is no built-in checklist.
 - **RFP** (required): the draft 제안요청서, `.hwpx` or `.hwp`. Memos can only be written into HWPX, so a `.hwp` RFP is converted first (step 1).
 - PDF is read only if `pdfplumber` or `pypdf` is installed; otherwise `[실패]` says so — ask for the original file (HWPX/DOCX/XLSX) or `.txt`. Scanned PDFs and images have no text and are not read.
 - Optional related documents (공고문, 원가계산서, 과업내용서 …): used only for cross-checks.
@@ -44,14 +44,19 @@ If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --che
 
 ### 1. Convert and extract
 - RFP is `.hwp`: `python <skill-dir>/scripts/hancom.py convert <rfp.hwp> -o <work>/<stem>.hwpx` (Windows + 한/글; no packages), then use that HWPX everywhere below. If it prints `[실패]`, ask the user to save the RFP as HWPX in 한/글 (파일 → 다른 이름으로 저장 → HWPX). Other `.hwp` documents are read directly; do not convert them.
-- `python <skill-dir>/scripts/extract_text.py <guideline> <rfp.hwpx> [<other docs>] -o <work>/extracted`
+- `python <skill-dir>/scripts/extract_text.py [<attached guidelines>] <rfp.hwpx> [<other docs>] -o <work>/extracted`
 - Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[문단 3 머리말]` (also 꼬리말/각주/미주), `[시트!12행]`, `[줄 7]`. Put the tag in `위치`. Pair table values by row.
 - `읽은 내용이 없습니다` or `[실패]` means the file was not read: say so; do not review it as empty.
 - An Excel cell shown as `=…(계산값 없음)` is a formula whose result was never saved: ask for the file saved once in Excel, or treat that value as unknown. Excel dates appear as serial numbers (e.g. `45930`); do not guess the date.
 - DOCX tables have no row/column tags; pair DOCX table values only when the line itself makes the pairing clear.
 
-### 2. Read the guideline
-Read the whole extracted guideline once. In `<work>/guide_items.md` copy only the lines that can be judged from documents (verbatim, with their tag), marking ones the guideline calls 필수. Skip internal approvals and procedures outside the documents.
+### 2. Choose and read the guidelines
+- Run `python <skill-dir>/scripts/guides.py sync`. It extracts new or changed library files and lists every guideline as `- <id> | <적용 대상>` with its 추출본 path.
+- For a guideline with `(설명 없음)`, read its first ~60 lines and record one line on what it applies to (contract type, 사업 유형, 금액 범위, 기관): `guides.py describe <id> "<적용 대상>"`. This is saved; later runs only read the list.
+- Read the RFP's opening (사업명, 계약 방법, 용역/물품/공사, SW 여부, 금액) and pick the library guidelines whose 적용 대상 fits. When unsure, include it. Write the chosen ids with one-line reasons at the top of `<work>/guide_items.md`, and name them in the reply.
+- Chosen guidelines and attached ones are the evidence; their 추출본 paths go to `validate_review.py --guide` (one `--guide` each). An unchosen guideline may be used only after `guides.py search <단어...>` finds a line that clearly applies; then add that guideline to the chosen list.
+
+Read every chosen guideline whole, once. In `<work>/guide_items.md` copy only the lines that can be judged from documents (verbatim, with their tag), marking ones the guideline calls 필수. Skip internal approvals and procedures outside the documents.
 
 ### 3. Read the documents once and write findings as you go
 Read every extracted document chunk by chunk. After each chunk:
@@ -82,7 +87,7 @@ It outputs only mismatches. If a result contradicts the source (a value read wro
 
 ### 6. Validate (repeat until 0 errors)
 ```bash
-python <skill-dir>/scripts/validate_review.py numeric_findings.json review.json --guide extracted/<지침>.txt --doc 제안요청서=extracted/<rfp>.txt [--doc 공고문=extracted/<notice>.txt]
+python <skill-dir>/scripts/validate_review.py numeric_findings.json review.json --guide <지침 추출본> [--guide …] --doc 제안요청서=extracted/<rfp>.txt [--doc 공고문=extracted/<notice>.txt]
 ```
 Fix the cause (re-copy the quote, drop an unsupported finding). Never weaken a finding just to pass, and never delete one without a reason.
 

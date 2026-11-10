@@ -14,13 +14,23 @@
 
 ## 사용
 
-- 요청: 지침 파일 + RFP를 주고 "검토해 줘"
+- 요청: RFP(+ 필요하면 지침 파일)를 주고 "검토해 줘"
 - RFP: `.hwpx` 또는 `.hwp` (`.hwp`는 한/글이 깔린 Windows에서 자동으로 HWPX 변환. 그 밖의 환경은 한/글에서 HWPX로 저장해 줄 것)
 - 지침·관련 문서: `.xlsx` `.xlsm` `.hwpx` `.hwp` `.docx` `.txt` `.md`
 - 공고문·원가계산서 등 함께 주면 문서 간 대조
 - PDF: `pip install pypdf`(또는 pdfplumber)가 있을 때만 읽음. 스캔 PDF·이미지는 읽지 않음
 - 결과 위치: RFP 폴더의 `output/<RFP 이름>_검토메모.hwpx`
 - 원본은 수정하지 않음. 같은 이름이 있으면 `_2`, `_3`으로 새로 저장
+
+## 지침 라이브러리
+
+- 자주 쓰는 지침을 한 폴더에 모아 두면 AI가 RFP에 맞는 것을 골라 씀
+- 폴더: `~/rfp-guides/` (다른 곳이면 환경변수 `RFP_GUIDES`)
+- 넣는 법: 지침 원본(xlsx·hwpx·hwp·docx·pdf·txt)을 폴더에 복사. 하위 폴더 가능
+- 처음 쓸 때 추출본과 적용 대상 설명을 `.index/`에 저장. 파일이 바뀌면 다시 만듦
+- 고르는 기준: 적용 대상 설명과 RFP 앞부분(계약 방법·사업 유형·금액). 고른 지침과 이유를 결과 안내에 적음
+- 첨부한 지침은 항상 사용
+- 검색: `python scripts/guides.py search 하도급 공동수급` — 모든 지침에서 해당 줄 찾기
 
 ## 검토본
 
@@ -37,6 +47,7 @@
 - `SKILL.md`: 에이전트가 따르는 규칙과 절차
 - `scripts/hancom.py`: 한/글로 `.hwp` → `.hwpx` 변환, 결과 열림 확인, 재저장(Windows + 한/글, PowerShell 사용)
 - `scripts/extract_text.py`: 문서 → 위치 표시 텍스트, 재개용 입력 확인
+- `scripts/guides.py`: 지침 라이브러리 정리·적용 대상 기록·검색
 - `scripts/show_lines.py`: 추출 텍스트 나눠 보기
 - `scripts/check_numbers.py`: 금액·합계 비교
 - `scripts/validate_review.py`: 인용·근거가 실제 문서·지침에 있는지 검사
