@@ -371,7 +371,7 @@ def main():
     ap.add_argument("--author", default="RFP 검토")
     a = ap.parse_args()
     if not a.hwpx.lower().endswith(".hwpx"):
-        print("[중단] HWPX 파일만 메모를 달 수 있습니다. 한/글에서 '다른 이름으로 저장 → HWPX'로 저장해 주세요.")
+        print("[중단] HWPX 파일만 메모를 달 수 있습니다. .hwp는 convert_to_hwpx.py로 먼저 변환하세요.")
         return 2
     findings, others = load_findings(a.findings, a.doc)
     # 같은 범위에 지적이 겹치면 먼저 단 지적의 색이 남는다: 위급한 것부터 단다

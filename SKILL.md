@@ -9,11 +9,11 @@ Goal: the author opens the returned 한/글 file and finds a highlight and a sho
 
 Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by that absolute path. They need only Python 3.10+ (no packages to install); use `python3` or `py -3` if `python` is missing. On Windows Git Bash write paths as `C:/Users/...`, not `/c/Users/...`. Every value you write into JSON is Korean; keys are fixed.
 
-**Do not write your own scripts.** Write JSON and notes with your file-editing tool, not with generated Python or long heredocs; count and list results from the scripts' own output. The only scripts you run are the five below.
+**Do not write your own scripts.** Write JSON and notes with your file-editing tool, not with generated Python or long heredocs; count and list results from the scripts' own output. The only scripts you run are the ones in `scripts/`.
 
 ## Inputs and paths
 - **지침** (required): the review guideline file the user gives — XLSX, HWPX/HWP, DOCX, TXT/MD. If none is given, ask for it. There is no built-in checklist.
-- **RFP** (required): the draft 제안요청서 as `.hwpx`. Memos can only be written into HWPX. If you get `.hwp`, ask the user to save it in 한/글 as HWPX (파일 → 다른 이름으로 저장 → HWPX).
+- **RFP** (required): the draft 제안요청서, `.hwpx` or `.hwp`. Memos can only be written into HWPX, so a `.hwp` RFP is converted first (step 1).
 - PDF and scanned images are not read. Ask for the original file (HWPX/DOCX/XLSX) or the text pasted into a `.txt`.
 - Optional related documents (공고문, 원가계산서, 과업내용서 …): used only for cross-checks.
 - Output: `<RFP folder>/output/`, or the folder the user names. Never the skill folder or the shell cwd.
@@ -42,7 +42,8 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 ### 0. Start or resume
 If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --check -o <work>/extracted`. Exit 0: continue from the existing files. Exit 1 (an input changed or files missing): delete that work folder and start over — never reuse old notes or findings.
 
-### 1. Extract
+### 1. Convert and extract
+- RFP is `.hwp`: `python <skill-dir>/scripts/convert_to_hwpx.py <rfp.hwp> -o <work>/<stem>.hwpx` (Windows + 한/글; no packages), then use that HWPX everywhere below. If it prints `[변환 실패]`, ask the user to save the RFP as HWPX in 한/글 (파일 → 다른 이름으로 저장 → HWPX). Other `.hwp` documents are read directly; do not convert them.
 - `python <skill-dir>/scripts/extract_text.py <guideline> <rfp.hwpx> [<other docs>] -o <work>/extracted`
 - Lines carry location tags: `[문단 41]`, `[문단 52 표3 2-4]` (table 3, row 2, col 4), `[문단 3 머리말]` (also 꼬리말/각주/미주), `[시트!12행]`, `[줄 7]`. Put the tag in `위치`. Pair table values by row.
 - `읽은 내용이 없습니다` or `[실패]` means the file was not read: say so; do not review it as empty.
