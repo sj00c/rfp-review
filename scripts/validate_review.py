@@ -3,8 +3,8 @@
 
 - 원문: 해당 문서의 추출 텍스트에 그대로 있어야 한다(공백 무시, '…' 생략 허용).
 - 근거: 지침 추출 텍스트에 그대로 있는 문구이거나 '문서 자체 오류'(오타·빈칸·문서 안/문서 간 모순).
-- 판정: 수정필요 | 확인필요. 문제없는 항목은 기록하지 않는다.
-- 수정필요에는 수정안, 확인필요에는 확인할 내용(수정안 칸)이 필요하다.
+- 판정: 필수수정 | 수정필요 | 확인필요. 문제없는 항목은 기록하지 않는다.
+- 고칠 곳에는 수정안, 확인필요에는 확인할 내용(수정안 칸)이 필요하다.
 
 사용법:
   python validate_review.py numeric_findings.json review.json \
@@ -16,7 +16,7 @@ import re
 import sys
 
 SELF = "문서 자체 오류"
-VERDICTS = {"수정필요", "확인필요"}
+VERDICTS = ("필수수정", "수정필요", "확인필요")
 WS = re.compile(r"\s+")
 TAG = re.compile(r"^\s*\[[^\]]*\]\s*")
 OBJECT = re.compile(r"\[(수식|그림|개체)")
@@ -66,7 +66,7 @@ def check(findings, guide, docs):
         seen.add(fid)
         v = f.get("판정")
         if v not in VERDICTS:
-            errors.append(f"{label}: 판정 '{v}' — 수정필요/확인필요만 기록합니다(문제없는 항목은 쓰지 않음)")
+            errors.append(f"{label}: 판정 '{v}' — 필수수정/수정필요/확인필요만 기록합니다(문제없는 항목은 쓰지 않음)")
         for field in ("위치", "요약", "문제점", "수정안"):
             if not str(f.get(field) or "").strip():
                 errors.append(f"{label}: {field}이(가) 비어 있습니다")
@@ -110,7 +110,7 @@ def main():
             findings += [(p, f) for f in json.load(fp)["findings"]]
 
     errors = check(findings, guide, docs)
-    counts = {v: sum(1 for _, f in findings if f.get("판정") == v) for v in sorted(VERDICTS)}
+    counts = {v: sum(1 for _, f in findings if f.get("판정") == v) for v in VERDICTS}
     print(f"검사: 지적 {len(findings)}건 {counts} — 오류 {len(errors)}건")
     for e in errors[:40]:
         print(f"[오류] {e}")

@@ -17,7 +17,7 @@ facts.json:
      "합계": {"문서": "제안요청서", "위치": "[문단 52 표3 9-3]", "원문": "합계 90", "값": 90}}
   ]
 }
-근거를 비우면 '문서 자체 오류'로 기록한다.
+근거를 비우면 '문서 자체 오류'로 기록한다. "필수": true인 묶음의 지적은 필수수정(빨강), 아니면 수정필요(노랑).
 
 사용법:
   python check_numbers.py facts.json -o numeric_findings.json
@@ -76,8 +76,9 @@ def entry_text(e, x):
     return f"{e['문서']} {e['위치']} {show(x)}"
 
 
-def finding(n, entry, 요약, 문제점, 수정안, 근거):
-    return {"id": f"N{n}", "판정": "수정필요", "문서": entry["문서"], "위치": entry["위치"],
+def finding(n, c, entry, 요약, 문제점, 수정안, 근거):
+    verdict = "필수수정" if c.get("필수") is True else "수정필요"
+    return {"id": f"N{n}", "판정": verdict, "문서": entry["문서"], "위치": entry["위치"],
             "원문": entry["원문"], "요약": 요약, "문제점": 문제점, "수정안": 수정안, "근거": 근거}
 
 
@@ -113,7 +114,7 @@ def check(facts):
         listing = "; ".join(entry_text(e, x) for e, x in vals)
         for e, x in vals:
             others = "; ".join(entry_text(o, y) for o, y in vals if o is not e)
-            out.append(finding(len(out) + 1, e, f"{name} 불일치",
+            out.append(finding(len(out) + 1, c, e, f"{name} 불일치",
                                f"같아야 할 {name} 값이 문서마다 다릅니다. 이곳 {show(x)}, 다른 곳: {others}",
                                f"맞는 값을 확인해 모든 곳({listing})을 같은 값으로 맞춰 주세요.", basis))
     for c in facts.get("합계", []):
@@ -128,7 +129,7 @@ def check(facts):
         computed = sum(parts, Fraction(0))
         if computed == stated:
             continue
-        out.append(finding(len(out) + 1, total_entry, f"{name} 계산 오류",
+        out.append(finding(len(out) + 1, c, total_entry, f"{name} 계산 오류",
                            f"{name}: 세부 값 {len(parts)}개의 합은 {show(computed)}이지만 적힌 합계는 {show(stated)}입니다.",
                            f"세부 값과 합계를 확인해 맞춰 주세요(계산 합계 {show(computed)}).", basis))
     return out, errors

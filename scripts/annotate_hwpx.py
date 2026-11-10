@@ -29,8 +29,10 @@ import xml.etree.ElementTree as ET
 HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 HP = "{%s}" % HP_NS
 MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 623209829, 한/글이 메모 필드에 쓰는 값
-COLOR = {"수정필요": "#FFFF00", "확인필요": "#9FE2FF"}
-LABEL = {"수정필요": "수정 필요", "확인필요": "확인 요청"}
+# 판정 = 중요도. 순서대로 위급 → 확인. 빨강: 그대로 두면 공고가 위법·무효가 되거나 다툼이 생기는 곳
+VERDICTS = ("필수수정", "수정필요", "확인필요")
+COLOR = {"필수수정": "#FF7F7F", "수정필요": "#FFFF00", "확인필요": "#9FE2FF"}
+LABEL = {"필수수정": "필수 수정", "수정필요": "수정 필요", "확인필요": "확인 요청"}
 SELF = "문서 자체 오류"
 MEMO_SEP = "─" * 16  # 한 메모에 합친 지적 사이 구분선
 WS = re.compile(r"\s+")
@@ -372,6 +374,8 @@ def main():
         print("[중단] HWPX 파일만 메모를 달 수 있습니다. 한/글에서 '다른 이름으로 저장 → HWPX'로 저장해 주세요.")
         return 2
     findings, others = load_findings(a.findings, a.doc)
+    # 같은 범위에 지적이 겹치면 먼저 단 지적의 색이 남는다: 위급한 것부터 단다
+    findings.sort(key=lambda f: VERDICTS.index(f["판정"]))
     if others and not findings:
         print(f"[중단] --doc '{a.doc}'의 지적이 없습니다. findings의 문서 값: {', '.join(sorted({f['문서'] for f in others}))}")
         return 2
@@ -480,15 +484,15 @@ def annotate(a, findings, others, zin):
 
     # 검토 요약 메모: 첫 문단 앞부분에 단다
     every = [f for f, _ in anchored] + unanchored + others
-    n_req = sum(1 for f in every if f["판정"] == "수정필요")
-    n_chk = len(every) - n_req
-    head = f"고칠 곳 {n_req}건" + (f", 확인이 필요한 곳 {n_chk}건" if n_chk else "") + "입니다."
+    count = {v: sum(1 for f in every if f["판정"] == v) for v in VERDICTS}
+    head = ", ".join(f"{LABEL[v]} {n}건" for v, n in count.items() if n) or "지적 0건"
+    head += "입니다."
     if len(every) > len(anchored):
         head += f" 이 중 {len(every) - len(anchored)}건은 본문 위치에 표시하지 않고 아래에 따로 적었습니다."
     summary = ["[RFP 검토 요약] AI 1차 검토 결과입니다. 최종 판단은 담당자가 합니다.", head]
     # 문서 순서대로 제목만 모아 한눈에 보이게 한다. 위치를 못 찾은 지적은 본문까지 여기 싣는다.
     ordered = [f for f, _ in sorted(anchored, key=lambda x: x[1])]
-    for verdict in ("수정필요", "확인필요"):
+    for verdict in VERDICTS:
         group = [f for f in ordered if f["판정"] == verdict]
         if group:
             summary += ["", f"■ {LABEL[verdict]} {len(group)}건"]
@@ -504,8 +508,9 @@ def annotate(a, findings, others, zin):
             lines = memo_lines(f)
             summary += [f" ({f['문서']} {f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
     summary += ["", "■ 처리 방법",
-                " - 노란 형광펜: 고친 뒤 메모 삭제",
-                " - 파란 형광펜: 확인한 내용을 메모에 답변",
+                " - 빨간 형광펜(필수 수정): 공고 전에 반드시 고친 뒤 메모 삭제",
+                " - 노란 형광펜(수정 필요): 고친 뒤 메모 삭제",
+                " - 파란 형광펜(확인 요청): 확인한 내용을 메모에 답변",
                 " - 고치지 않을 곳: 메모에 사유 작성"]
     if paras:
         P = get_para(paras[0][2])
@@ -558,7 +563,7 @@ def annotate(a, findings, others, zin):
 
     print(f"저장: {out}")
     print(f"메모 {len(anchored)}건 + 요약 메모 1건 (본문 표시 못 함 {len(unanchored)}건, 다른 문서 {len(others)}건)")
-    print(f"합계: 수정필요 {n_req}건, 확인필요 {n_chk}건")
+    print("합계: " + ", ".join(f"{v} {n}건" for v, n in count.items()))
     if scripts:
         print(f"문서 스크립트 {len(scripts)}개를 검토본에서 뺐습니다.")
     # 위치를 못 찾은 것을 먼저, 정상 메모는 20건까지만(하네스 출력 잘림 방지)
