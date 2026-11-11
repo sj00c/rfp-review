@@ -45,7 +45,7 @@ def evaluate(value):
 def show(x):
     if x.denominator == 1:
         return f"{x.numerator:,}"
-    return f"{float(x):,.2f}"
+    return f"{float(x):,.2f}".rstrip("0").rstrip(".")
 
 
 def entry_text(e, x):
@@ -59,6 +59,9 @@ def finding(n, c, entry, 요약, 문제점, 수정안, 근거):
 
 
 ENTRY = ("문서", "위치", "원문", "값")
+# 기준 그룹의 조건: 키 → (만족 판정, 문구)
+BOUNDS = {"이상": (lambda x, b: x >= b, "이상"), "이하": (lambda x, b: x <= b, "이하"),
+          "초과": (lambda x, b: x > b, "초과"), "미만": (lambda x, b: x < b, "미만")}
 
 
 def entries(c, key):
@@ -107,6 +110,24 @@ def check(facts):
         out.append(finding(len(out) + 1, c, total_entry, f"{name} 계산 오류",
                            f"세부 {len(parts)}개 합 {show(computed)}, 적힌 합계 {show(stated)}",
                            f"세부 값과 합계를 맞춤(계산 합계 {show(computed)})", basis))
+    for c in facts.get("기준", []):
+        name, basis = c.get("항목", "기준"), (c.get("근거") or SELF)
+        try:
+            items = [(e, evaluate(e["값"])) for e in entries(c, "값")]
+            bounds = [(k, evaluate(c[k])) for k in BOUNDS if k in c]
+        except (KeyError, TypeError, ValueError) as e:
+            errors.append(f"{name}: {e}")
+            continue
+        if not bounds:
+            errors.append(f"{name}: 이상·이하·초과·미만 중 하나 이상이 필요합니다")
+            continue
+        rule = ", ".join(f"{show(b)} {BOUNDS[k][1]}" for k, b in bounds)
+        for e, x in items:
+            if all(BOUNDS[k][0](x, b) for k, b in bounds):
+                continue
+            out.append(finding(len(out) + 1, c, e, f"{name} 기준 위반",
+                               f"이곳 {show(x)}, 기준 {rule}",
+                               f"기준({rule})에 맞게 수정", basis))
     return out, errors
 
 
@@ -125,8 +146,8 @@ def main():
         return 1
     with open(a.out, "w", encoding="utf-8") as fp:
         json.dump({"findings": found}, fp, ensure_ascii=False, indent=2)
-    n_eq, n_sum = len(facts.get("일치", [])), len(facts.get("합계", []))
-    print(f"검사: 일치 {n_eq}건, 합계 {n_sum}건 → 지적 {len(found)}건")
+    n = {k: len(facts.get(k, [])) for k in ("일치", "합계", "기준")}
+    print(f"검사: 일치 {n['일치']}건, 합계 {n['합계']}건, 기준 {n['기준']}건 → 지적 {len(found)}건")
     for f in found:
         print(f"- {f['id']} {f['문서']} {f['위치']} {f['요약']}")
     print(f"저장: {a.out}")

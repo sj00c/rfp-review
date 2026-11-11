@@ -13,7 +13,8 @@ HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 HP = "{%s}" % HP_NS
 MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 한/글이 메모 필드에 쓰는 값
 VERDICTS = ("필수수정", "수정필요", "확인필요")  # 위급한 순서. 메모를 다는 순서로 쓴다
-HIGHLIGHT = "#FFFF00"
+# 형광펜: 고칠 곳은 노랑, 확인할 곳은 하늘. 위급한 정도는 메모 풍선 색으로 나눈다
+HIGHLIGHT = {"필수수정": "#FFFF00", "수정필요": "#FFFF00", "확인필요": "#9FE2FF"}
 # (배경, 테두리, 선택했을 때 배경)
 MEMO_COLOR = {"필수수정": ("#FFE1E1", "#E04848", "#FFC2C2"),
               "수정필요": ("#FFF4C2", "#D9A400", "#FFE88A"),
@@ -283,14 +284,15 @@ class MemoFactory:
         return begin_ctrl, end_ctrl, sl
 
     PARA_PR = "0"  # 메모 문단 모양(왼쪽 정렬). annotate()에서 header.xml에 추가한 id로 바꾼다
+    STYLE, CHAR_PR = "0", "0"  # 문서에 '메모' 스타일이 있으면 그 스타일·글자 모양
 
     @staticmethod
     def add_lines(sublist, lines):
         for line in lines:
             p = ET.SubElement(sublist, HP + "p", {
-                "id": "0", "paraPrIDRef": MemoFactory.PARA_PR, "styleIDRef": "0", "pageBreak": "0",
+                "id": "0", "paraPrIDRef": MemoFactory.PARA_PR, "styleIDRef": MemoFactory.STYLE, "pageBreak": "0",
                 "columnBreak": "0", "merged": "0"})
-            run = ET.SubElement(p, HP + "run", {"charPrIDRef": "0"})
+            run = ET.SubElement(p, HP + "run", {"charPrIDRef": MemoFactory.CHAR_PR})
             ET.SubElement(run, HP + "t").text = line
 
 
@@ -328,17 +330,28 @@ def memo_lines(f):
     return lines
 
 
-def add_memo_para_pr(header):
-    """paraPr id=0을 복제해 왼쪽 정렬·줄간격 130%·어절 단위 줄바꿈으로 바꾼 문단 모양을 추가한다.
+def memo_style(header):
+    """문서의 '메모' 스타일(한/글이 메모 글자에 쓰는 9pt 모양). (스타일 id, paraPr id, charPr id) 또는 None.
+    본문 글자(charPr 0)는 보통 10pt 이상이라 풍선이 커져 잘린다."""
+    for tag in re.findall(r'<hh:style\b[^>]*>', header):
+        if re.search(r'\bengName="Memo"', tag) or re.search(r'\bname="메모"', tag):
+            got = [re.search(r'\b%s="(\d+)"' % k, tag) for k in ("id", "paraPrIDRef", "charPrIDRef")]
+            if all(got):
+                return tuple(g.group(1) for g in got)
+    return None
+
+
+def add_memo_para_pr(header, base="0"):
+    """paraPr id=base를 복제해 왼쪽 정렬·줄간격 130%·어절 단위 줄바꿈으로 바꾼 문단 모양을 추가한다.
     header 텍스트를 직접 고쳐 나머지 부분은 바이트 그대로 둔다. 실패하면 (원문, None)."""
     m_props = re.search(r'(<hh:paraProperties\b[^>]*\bitemCnt=")(\d+)("[^>]*>)', header)
-    m_p0 = re.search(r'<hh:paraPr id="0"[\s\S]*?</hh:paraPr>', header)
+    m_p0 = re.search(r'<hh:paraPr id="%s"[\s\S]*?</hh:paraPr>' % base, header)
     m_end = header.find("</hh:paraProperties>")
     if not (m_props and m_p0 and m_end > 0):
         return header, None
     ids = [int(x) for x in re.findall(r'<hh:paraPr id="(\d+)"', header)]
     new_id = str(max(ids) + 1)
-    p = m_p0.group(0).replace('<hh:paraPr id="0"', f'<hh:paraPr id="{new_id}"', 1)
+    p = m_p0.group(0).replace(f'<hh:paraPr id="{base}"', f'<hh:paraPr id="{new_id}"', 1)
     p = re.sub(r'(<hh:align\b[^>]*\bhorizontal=")\w+', r"\g<1>LEFT", p, count=1)
     p = re.sub(r'(<hh:lineSpacing type="PERCENT" value=")\d+', r"\g<1>130", p)
     p = p.replace('breakNonLatinWord="BREAK_WORD"', 'breakNonLatinWord="KEEP_WORD"')
@@ -405,7 +418,11 @@ def annotate(a, findings, others, zin):
 
     changed = {}
     if "Contents/header.xml" in zin.namelist():
-        hdr, pid = add_memo_para_pr(zin.read("Contents/header.xml").decode("utf-8"))
+        hdr = zin.read("Contents/header.xml").decode("utf-8")
+        style = memo_style(hdr)
+        if style:
+            MemoFactory.STYLE, MemoFactory.CHAR_PR = style[0], style[2]
+        hdr, pid = add_memo_para_pr(hdr, style[1] if style else "0")
         if pid is not None:
             changed["Contents/header.xml"] = hdr.encode("utf-8")
             MemoFactory.PARA_PR = pid
@@ -480,7 +497,7 @@ def annotate(a, findings, others, zin):
         else:
             begin, end, sl = factory.make(lines, f["판정"])
             records.append(((num, s), begin[0]))
-            color = HIGHLIGHT
+            color = HIGHLIGHT[f["판정"]]
             P.inserts += [(s, 0, 0, ("ctrl", begin, None)), (e - 1, 1, 9, ("ctrl", end, None))]
             # 형광펜: run마다 따로 열고 닫는다
             runs_hit = {}
@@ -500,14 +517,10 @@ def annotate(a, findings, others, zin):
     head += "입니다."
     if len(every) > len(anchored):
         head += f" 이 중 {len(every) - len(anchored)}건은 본문 위치에 표시하지 않고 아래에 따로 적었습니다."
-    summary = ["[RFP 검토 요약] AI 1차 검토 결과입니다. 최종 판단은 담당자가 합니다.", head]
-    # 문서 순서대로 제목만 모아 한눈에 보이게 한다. 위치를 못 찾은 지적은 본문까지 여기 싣는다.
-    ordered = [f for f, _ in sorted(anchored, key=lambda x: x[1])]
-    for verdict in VERDICTS:
-        group = [f for f in ordered if f["판정"] == verdict]
-        if group:
-            summary += ["", f"■ {LABEL[verdict]} {len(group)}건"]
-            summary += [f" {i}. {title(f)}" for i, f in enumerate(group, 1)]
+    # 요약 메모는 짧게 둔다. 길면 한/글이 풍선을 잘라 보여 준다. 본문에 단 지적은 각 메모에 있으므로
+    # 제목을 다시 나열하지 않고, 본문에 못 단 지적과 다른 문서의 지적만 싣는다.
+    summary = ["[검토 요약] AI 1차 검토입니다. 최종 판단은 담당자가 합니다.", head,
+               "노란 형광펜은 고친 뒤, 하늘색은 확인해 메모에 답한 뒤 메모를 지워 주세요."]
     if unanchored:
         summary += ["", f"■ 본문에 표시하지 못한 지적 {len(unanchored)}건"]
         for f in unanchored:
@@ -518,11 +531,6 @@ def annotate(a, findings, others, zin):
         for f in others:
             lines = memo_lines(f)
             summary += [f" ({f['문서']} {f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
-    summary += ["", "■ 처리 방법",
-                " - 빨간 메모(필수 수정): 공고 전에 반드시 고친 뒤 메모 삭제",
-                " - 노란 메모(수정 필요): 고친 뒤 메모 삭제",
-                " - 파란 메모(확인 요청): 확인한 내용을 메모에 답변",
-                " - 고치지 않을 곳: 메모에 사유 작성"]
     if paras:
         P = get_para(paras[0][2])
         body = P.text.rstrip()

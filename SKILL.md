@@ -53,7 +53,7 @@ If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --che
 ### 2. Choose and read the guidelines
 - Run `python <skill-dir>/scripts/guides.py sync`. It extracts new or changed library files and lists every guideline as `- <id> | <적용 대상>` with its 추출본 path.
 - For a guideline with `(설명 없음)`, read its first ~60 lines and record one line on what it applies to (contract type, 사업 유형, 금액 범위, 기관): `guides.py describe <id> "<적용 대상>"`. This is saved; later runs only read the list.
-- Read the RFP's opening (사업명, 계약 방법, 용역/물품/공사, SW 여부, 금액) and pick the library guidelines whose 적용 대상 fits. When unsure, include it. Write the chosen ids with one-line reasons at the top of `<work>/guide_items.md`, and name them in the reply.
+- Read the RFP's opening and decide 계약 유형 (용역/물품/공사) and 낙찰 방식 (협상에 의한 계약/적격심사), plus 사업명, SW 여부, 금액. Quote the RFP line for each in the first lines of `<work>/guide_items.md`; if the RFP does not state one, write `미기재` and pick the guidelines for every possible value. Pick the library guidelines whose 적용 대상 fits that type and method (e.g. 협상 → 협상에의한계약체결기준·제안서평가세부기준, 적격 → 적격심사기준). When unsure, include it. Write the chosen ids with one-line reasons below, and name the type, method and guidelines in the reply.
 - Chosen guidelines and attached ones are the evidence; their 추출본 paths go to `validate_review.py --guide` (one `--guide` each). An unchosen guideline may be used only after `guides.py search <단어...>` finds a line that clearly applies; then add that guideline to the chosen list.
 
 Read every chosen guideline whole, once. In `<work>/guide_items.md` copy only the lines that can be judged from documents (verbatim, with their tag), marking ones the guideline calls 필수. Skip internal approvals and procedures outside the documents.
@@ -65,7 +65,7 @@ Read every extracted document chunk by chunk. After each chunk:
 At the end of each chunk append one line `<file> <start>-<end> ✓` to `guide_items.md` so a resume knows where to continue.
 
 ### 4. Numbers
-`facts.json`: `일치` groups for values that must be equal across places, `합계` for parts that must add up to a stated total; add `"필수": true` to a group for budget, price or score totals (red, otherwise yellow). Values are numbers or `+ - * /` expressions (`"330,000,000"`, `"300000000*1.1"`) to align VAT basis — only use a rate the documents or guideline state. An empty `근거` is recorded as `문서 자체 오류`.
+`facts.json`: `일치` groups for values that must be equal across places, `합계` for parts that must add up to a stated total, `기준` for a value that must meet a bound the guideline states (배점 비율·배점 한도·협상적격 기준점수·기간 하한 …): `이상`/`이하`/`초과`/`미만`, the bound written as the guideline gives it (`"90*85/100"`). Add `"필수": true` to a group for budget, price or score items (red, otherwise yellow). Values are numbers or `+ - * /` expressions (`"330,000,000"`, `"300000000*1.1"`) to align VAT basis — only use a rate the documents or guideline state. An empty `근거` is recorded as `문서 자체 오류`.
 ```json
 {"일치": [
   {"항목": "사업금액(부가세 포함)", "근거": "<지침 문구 그대로 | 문서 자체 오류>", "필수": true,
@@ -75,7 +75,14 @@ At the end of each chunk append one line `<file> <start>-<end> ✓` to `guide_it
   {"항목": "기술평가 배점 합계", "근거": "문서 자체 오류", "필수": true,
    "부분": [{"문서": "제안요청서", "위치": "[문단 52 표3 2-3]", "원문": "20", "값": 20},
           {"문서": "제안요청서", "위치": "[문단 52 표3 3-3]", "원문": "30", "값": 30}],
-   "합계": {"문서": "제안요청서", "위치": "[문단 52 표3 9-3]", "원문": "합계 90", "값": 90}}]}
+   "합계": {"문서": "제안요청서", "위치": "[문단 52 표3 9-3]", "원문": "합계 90", "값": 90}}],
+ "기준": [
+  {"항목": "협상적격자 기술평가 점수", "근거": "<지침 문구 그대로>", "필수": true,
+   "값": {"문서": "제안요청서", "위치": "[문단 70]", "원문": "기술평가 점수가 70점 이상인 자", "값": 70},
+   "이상": "90*85/100"},
+  {"항목": "기술평가 배점 비율", "근거": "<지침 문구 그대로>", "필수": true,
+   "값": {"문서": "제안요청서", "위치": "[문단 52 표3 9-3]", "원문": "합계 90", "값": "90/(90+10)*100"},
+   "이상": 80, "이하": 90}]}
 ```
 Then:
 `python <skill-dir>/scripts/check_numbers.py facts.json -o numeric_findings.json`
@@ -109,7 +116,7 @@ On the RFP:
 ```bash
 python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json review.json --doc 제안요청서 -o "<output>/<원본stem>_검토메모.hwpx"
 ```
-- Every quote gets a yellow highlight; the memo balloon color shows urgency: red = 필수수정, yellow = 수정필요, blue = 확인필요, grey = summary. The summary memo on the first paragraph also carries findings it cannot place and findings on other documents, with their location.
+- Highlight: yellow = 고칠 곳 (필수수정·수정필요), sky blue = 확인필요. The memo balloon color shows urgency: red = 필수수정, yellow = 수정필요, blue = 확인필요, grey = summary. Memo text uses the document's own 메모 style (9pt) so balloons stay small. The summary memo is short: counts, how to handle, and only findings it could not place in the body; it does not list every title (each memo has its own). It carries findings it cannot place and findings on other documents, with their location.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
 - Findings whose `위치` has 머리말/꼬리말/각주/미주 always go to the summary memo (`요약 메모로`); that is final. Any other `요약 메모로` line means the quote was not matched in the HWPX: shorten it to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
 - The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos.
