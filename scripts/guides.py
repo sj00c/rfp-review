@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""검토 지침 라이브러리: 여러 지침 파일을 한 폴더에 두고, 추출본을 캐시해 골라 쓰고 검색한다.
-
-라이브러리 폴더: 환경변수 RFP_GUIDES, 없으면 ~/rfp-guides/. 지침 원본(xlsx·hwpx·hwp·docx·pdf·txt·md)을
-그 폴더(하위 폴더 포함)에 넣기만 하면 된다. 원본은 건드리지 않고, 추출본과 목록은 <폴더>/.index/에 둔다.
-
-  python guides.py sync                         새·바뀐 지침을 추출하고 목록을 출력한다(바뀐 지침은 설명을 지운다)
-  python guides.py describe <id> "<적용 대상>"   지침의 적용 대상 한 줄을 적는다(고를 때 이것만 본다)
-  python guides.py search 하도급 [공동수급 ...] [--id <id>]   모든 단어가 들어간 지침 줄(공백 무시)
-
-목록의 '추출본' 경로를 validate_review.py --guide에 그대로 준다.
-"""
 import argparse
 import json
 import os

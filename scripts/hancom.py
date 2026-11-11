@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""설치된 한/글로 문서를 변환·확인·재저장한다. Windows + 한/글 필요, Python 패키지 없음(PowerShell로 한/글을 부른다).
-
-  convert 제안요청서.hwp -o 작업폴더/제안요청서.hwpx   .hwp → .hwpx (메모는 HWPX에만 달 수 있다)
-  check   output/제안요청서_검토메모.hwpx              한/글로 열어 쪽수를 출력한다(열리면 0)
-  resave  output/제안요청서_검토메모.hwpx -o 새이름.hwpx 한/글로 열어 HWPX로 새로 저장한다('손상' 경고 해소용)
-
-원본과 기존 파일은 덮어쓰지 않는다(-o가 이미 있으면 중단).
-한/글은 외부 프로그램이 파일을 열 때 보안 확인 창을 띄울 수 있다. 승인 모듈(FilePathCheckerModule)이
-레지스트리에 등록돼 있으면 창 없이 연다. pyhwpx가 설치돼 있으면 그 DLL을 찾아 등록한다(설치는 필수 아님).
-창이 뜨면 '모두 허용'을 누른다. 제한 시간 안에 끝나지 않으면 실패로 본다.
-"""
 import argparse
 import importlib.util
 import locale
@@ -47,7 +36,7 @@ def register_security_module():
                 return True
     except OSError:
         pass
-    spec = importlib.util.find_spec("pyhwpx")  # import하지 않고 위치만 찾는다
+    spec = importlib.util.find_spec("pyhwpx")  # 설치돼 있으면 그 DLL만 빌린다(import·설치 불필요)
     dll = os.path.join(os.path.dirname(spec.origin), MODULE + ".dll") if spec and spec.origin else ""
     if not os.path.isfile(dll):
         return False

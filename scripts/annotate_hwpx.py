@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""검토 결과를 HWPX 문서에 한/글 '메모'와 형광펜으로 단다.
-
-- 지적한 원문 위치에 형광펜을 칠하고 그 범위에 메모(문제·수정안·근거)를 단다.
-- 첫 문단에는 요약 메모를 단다. 위치를 못 찾은 지적과 다른 문서(--doc 외)의 지적은 그 요약 메모에 싣는다.
-- 원본은 건드리지 않는다. 결과는 새 파일이며, 같은 이름이 있으면 _2, _3…을 붙인다.
-- 검토본에서는 문서 스크립트(Scripts/)를 뺀다. 스크립트가 든 HWPX에 메모를 넣으면
-  한/글이 '손상되었거나 변조되었을 가능성' 경고를 띄우며 열지 않는 경우가 있다.
-
-메모 구조는 한/글이 저장한 파일과 같다: 본문 run 안의
-  <hp:ctrl><hp:fieldBegin type="MEMO" ...><hp:parameters/><hp:subList>메모 내용</hp:subList></hp:fieldBegin></hp:ctrl>
-  지적한 텍스트
-  <hp:ctrl><hp:fieldEnd .../></hp:ctrl>
-형광펜: <hp:t>…<hp:markpenBegin color="#FFFF00"/>지적한 텍스트<hp:markpenEnd/>…</hp:t>
-메모 색: header.xml의 <hh:memoProperties>에 중요도별 <hh:memoPr>를 더하고 MemoShapeIDRef로 가리킨다.
-
-사용법:
-  python annotate_hwpx.py 제안요청서.hwpx numeric_findings.json review.json --doc 제안요청서 -o output/제안요청서_검토메모.hwpx
-"""
 import argparse
 import io
 import json
@@ -29,11 +11,10 @@ import xml.etree.ElementTree as ET
 
 HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 HP = "{%s}" % HP_NS
-MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 623209829, 한/글이 메모 필드에 쓰는 값
-# 판정 = 중요도. 순서대로 위급 → 확인. 빨강: 그대로 두면 공고가 위법·무효가 되거나 다툼이 생기는 곳
-VERDICTS = ("필수수정", "수정필요", "확인필요")
-HIGHLIGHT = "#FFFF00"  # 형광펜은 한 색. 중요도는 메모 풍선 색으로 구분한다
-# 메모 풍선 (배경, 테두리, 선택했을 때 배경). "요약"은 첫 문단의 검토 요약 메모
+MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 한/글이 메모 필드에 쓰는 값
+VERDICTS = ("필수수정", "수정필요", "확인필요")  # 위급한 순서. 메모를 다는 순서로 쓴다
+HIGHLIGHT = "#FFFF00"
+# (배경, 테두리, 선택했을 때 배경)
 MEMO_COLOR = {"필수수정": ("#FFE1E1", "#E04848", "#FFC2C2"),
               "수정필요": ("#FFF4C2", "#D9A400", "#FFE88A"),
               "확인필요": ("#E1EFFF", "#4A86D9", "#C2DCFF"),
@@ -41,7 +22,7 @@ MEMO_COLOR = {"필수수정": ("#FFE1E1", "#E04848", "#FFC2C2"),
 DEFAULT_SHAPE = "65535"  # 한/글 기본 메모 모양
 LABEL = {"필수수정": "필수 수정", "수정필요": "수정 필요", "확인필요": "확인 요청"}
 SELF = "문서 자체 오류"
-MEMO_SEP = "─" * 16  # 한 메모에 합친 지적 사이 구분선
+MEMO_SEP = "─" * 16
 WS = re.compile(r"\s+")
 
 
@@ -64,7 +45,8 @@ def para_hint(f):
 
 
 def strip_scripts(names, read):
-    """문서 스크립트 파일과 content.hpf의 해당 item·itemref를 뺀다. (뺄 파일, {이름: 바뀐 바이트})"""
+    """문서 스크립트와 content.hpf의 item·itemref를 뺀다. 스크립트가 있으면 한/글이 메모 단 파일을 '손상' 경고로 막는다.
+    (뺄 파일, {이름: 바뀐 바이트})"""
     scripts = {n for n in names if n.startswith("Scripts/") and not n.endswith("/")}
     hpf_name = "Contents/content.hpf"
     if not scripts or hpf_name not in names:
@@ -80,14 +62,14 @@ def strip_scripts(names, read):
 
 
 def publish(data, path):
-    """path가 없으면 그 이름, 있으면 _2, _3…으로 새로 만든다. 기존 파일은 덮어쓰지 않는다. 실제 경로를 돌려준다."""
+    """덮어쓰지 않고 path, path_2, path_3… 중 빈 이름에 쓴다. 실제 경로를 돌려준다."""
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
     stem, ext = os.path.splitext(os.path.basename(path))
     for n in range(1, 1000):
         dest = os.path.join(folder, f"{stem}_{n}{ext}" if n > 1 else stem + ext)
         try:
-            fp = open(dest, "xb")  # 'x': 이미 있으면 실패한다. 기존 파일을 덮어쓰지 않는다
+            fp = open(dest, "xb")
         except FileExistsError:
             continue
         try:
@@ -100,14 +82,13 @@ def publish(data, path):
     raise FileExistsError(f"빈 이름을 찾지 못했습니다: {path}")
 
 
-# ------------------------------------------------------------------ 문단 토큰화
 class Para:
     """문단의 직계 run들을 (char | sub | ctrl) 토큰 열로 펼친다."""
 
     def __init__(self, p):
         self.p = p
         self.runs = [r for r in p if local(r.tag) == "run"]
-        self.tokens = []  # run별 토큰 리스트
+        self.tokens = []
         self.chars = []   # 전역 문자 → (run idx, token idx)
         for ri, r in enumerate(self.runs):
             toks = []
@@ -240,7 +221,6 @@ class Para:
             self.p.remove(c)
 
 
-# ------------------------------------------------------------------ 메모 요소
 class MemoFactory:
     def __init__(self, author, start_number):
         self.author = author
@@ -423,7 +403,6 @@ def annotate(a, findings, others, zin):
         print("[중단] HWPX 본문(Contents/section*.xml)을 찾지 못했습니다.")
         return 2
 
-    # 메모 문단용 문단 모양(왼쪽 정렬)을 header에 추가한다
     changed = {}
     if "Contents/header.xml" in zin.namelist():
         hdr, pid = add_memo_para_pr(zin.read("Contents/header.xml").decode("utf-8"))
@@ -570,7 +549,7 @@ def annotate(a, findings, others, zin):
     for P in para_obj.values():
         P.rebuild()
 
-    # 저장: 원본 엔트리 순서·압축방식 유지, 바뀐 섹션만 교체
+    # 섹션은 다시 직렬화하고, 나머지 엔트리는 원본 순서·압축방식 그대로 복사한다
     for s in sections:
         body = ET.tostring(s["root"], encoding="unicode")
         body = s["root_tag"] + body[body.index(">") + 1:]

@@ -65,7 +65,19 @@ Read every extracted document chunk by chunk. After each chunk:
 At the end of each chunk append one line `<file> <start>-<end> ✓` to `guide_items.md` so a resume knows where to continue.
 
 ### 4. Numbers
-`facts.json` (format in the `check_numbers.py` header): `일치` groups for values that must be equal across places, `합계` for parts that must add up to a stated total; add `"필수": true` to a group for budget, price or score totals (red). Values may be expressions (`"300000000*1.1"`) to align VAT basis — only use a rate the documents or guideline state. Then:
+`facts.json`: `일치` groups for values that must be equal across places, `합계` for parts that must add up to a stated total; add `"필수": true` to a group for budget, price or score totals (red, otherwise yellow). Values are numbers or `+ - * /` expressions (`"330,000,000"`, `"300000000*1.1"`) to align VAT basis — only use a rate the documents or guideline state. An empty `근거` is recorded as `문서 자체 오류`.
+```json
+{"일치": [
+  {"항목": "사업금액(부가세 포함)", "근거": "<지침 문구 그대로 | 문서 자체 오류>", "필수": true,
+   "값": [{"문서": "제안요청서", "위치": "[문단 8]", "원문": "금330,000,000원", "값": "330,000,000"},
+          {"문서": "공고문", "위치": "[문단 3]", "원문": "300,000,000원(부가세 별도)", "값": "300000000*1.1"}]}],
+ "합계": [
+  {"항목": "기술평가 배점 합계", "근거": "문서 자체 오류", "필수": true,
+   "부분": [{"문서": "제안요청서", "위치": "[문단 52 표3 2-3]", "원문": "20", "값": 20},
+          {"문서": "제안요청서", "위치": "[문단 52 표3 3-3]", "원문": "30", "값": 30}],
+   "합계": {"문서": "제안요청서", "위치": "[문단 52 표3 9-3]", "원문": "합계 90", "값": 90}}]}
+```
+Then:
 `python <skill-dir>/scripts/check_numbers.py facts.json -o numeric_findings.json`
 It outputs only mismatches. If a result contradicts the source (a value read wrongly), fix `facts.json` and rerun.
 
@@ -82,7 +94,8 @@ It outputs only mismatches. If a result contradicts the source (a value read wro
 ]}
 ```
 - `id`: `R1`, `R2` … (`N…` is used by check_numbers). `문서` is the document name used with `--doc` below. Put findings on the RFP whenever the problem is in the RFP; for a contradiction with another document, quote the RFP side and name the other side in `문제점`. Findings on other documents are listed in the RFP's summary memo. One finding per location; the same problem in two places is two findings.
-- Keep memos short: `요약` is the memo title (≤ 25자). `문제점` one sentence (≤ 80자). `수정안` the text to paste or, for 확인필요, what to confirm (≤ 100자). `근거` the shortest guideline line that proves it. Longer text is cut with `…`. Do not invent legal wording.
+- Keep memos short: `요약` is the memo title (≤ 25자, not cut). `문제점` one sentence (≤ 80자). `수정안` the text to paste or, for 확인필요, what to confirm (≤ 100자). `근거` the shortest guideline line that proves it. Longer text is cut with `…`. Do not invent legal wording.
+- A long `원문` may skip text with `…` (the pieces stay in order on one line).
 - Quote at least 4 characters next to the problem; never quote `[수식…]`/`[그림]` markers.
 
 ### 6. Validate (repeat until 0 errors)

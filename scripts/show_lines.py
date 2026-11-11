@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""Print a line range of a UTF-8 text file with line numbers, never more than --max-bytes.
-
-Harness shells silently truncate long output (often ~10KB). Korean text is 3 bytes per character,
-so a fixed line count is not safe; this stops at a byte budget and prints where to continue.
-
-Usage: python show_lines.py extracted/제안요청서.txt 1          # from line 1 until the budget
-       python show_lines.py extracted/제안요청서.txt 1 120      # at most lines 1-120
-       python show_lines.py extracted/제안요청서.txt --count
-"""
 import argparse
 import sys
 
@@ -17,7 +8,7 @@ def main():
     ap.add_argument("file")
     ap.add_argument("start", nargs="?", type=int, default=1)
     ap.add_argument("end", nargs="?", type=int)
-    ap.add_argument("--max-bytes", type=int, default=8000)
+    ap.add_argument("--max-bytes", type=int, default=8000)  # 하네스는 약 10KB에서 출력을 자른다. 한글은 글자당 3바이트
     ap.add_argument("--count", action="store_true", help="print line and byte counts only")
     a = ap.parse_args()
     with open(a.file, encoding="utf-8") as fp:

@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""검토 대상 문서를 위치 표시가 붙은 텍스트로 변환한다.
-
-지원: .hwpx .hwp(HWP 5.x, 배포용/암호 문서 제외) .docx .xlsx .xlsm .txt .md — 표준 라이브러리만 사용
-      .pdf — pdfplumber 또는 pypdf가 설치돼 있을 때만(`pip install pypdf`). 스캔 PDF는 글자가 없어 읽지 못한다.
-출력: <출력폴더>/<파일명>.txt  — 각 줄 앞에 [문단 n] / [p.쪽] / [시트!n행] / [줄 n] 위치 표시
-
-사용법:
-  python extract_text.py 파일1 [파일2 ...] -o extracted/
-  python extract_text.py --check -o extracted/   # 중간 재개 전: 원본이 추출 때와 같은지 확인
-
-추출한 원본의 경로와 SHA-256은 <출력폴더>/_sources.json에 남는다.
-"""
 import argparse
 import hashlib
 import json
@@ -28,7 +16,6 @@ def clean(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-# ------------------------------------------------------------------ HWPX
 AREA = {"header": "머리말", "footer": "꼬리말", "footNote": "각주", "endNote": "미주"}
 
 
@@ -104,7 +91,6 @@ def from_hwpx(path):
     return out
 
 
-# ------------------------------------------------------------------ OLE(CFB) 최소 리더 (olefile 없이 .hwp 읽기)
 class MiniCFB:
     END = 0xFFFFFFFE
 
@@ -186,7 +172,6 @@ class MiniCFB:
         return self.chain(e["start"])[:e["size"]]
 
 
-# ------------------------------------------------------------------ HWP 5.x
 def from_hwp(path):
     ole = MiniCFB(path)
     header = ole.read("FileHeader")
@@ -234,13 +219,13 @@ def from_hwp(path):
                             chars.append("\t")
                         j += 16
                     continue
-                if 0xD800 <= c <= 0xDBFF and j + 4 <= len(rec):  # UTF-16 서러게이트 쌍 결합
+                if 0xD800 <= c <= 0xDBFF and j + 4 <= len(rec):
                     c2 = struct.unpack("<H", rec[j + 2:j + 4])[0]
                     if 0xDC00 <= c2 <= 0xDFFF:
                         chars.append(chr(0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00)))
                         j += 4
                         continue
-                if 0xD800 <= c <= 0xDFFF:  # 짝 없는 서러게이트: 건너뜀
+                if 0xD800 <= c <= 0xDFFF:
                     j += 2
                     continue
                 chars.append(chr(c))
@@ -252,7 +237,6 @@ def from_hwp(path):
     return out
 
 
-# ------------------------------------------------------------------ PDF (선택 패키지)
 def from_pdf(path):
     try:
         import pdfplumber  # 표·줄 순서를 더 잘 지킨다
@@ -268,7 +252,6 @@ def from_pdf(path):
     return [f"[p.{n}] {clean(ln)}" for n, text in enumerate(pages, 1) for ln in text.splitlines() if clean(ln)]
 
 
-# ------------------------------------------------------------------ DOCX
 def from_docx(path):
     W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     with zipfile.ZipFile(path) as z:
@@ -282,7 +265,6 @@ def from_docx(path):
     return out
 
 
-# ------------------------------------------------------------------ XLSX
 X = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 PKG = "{http://schemas.openxmlformats.org/package/2006/relationships}"

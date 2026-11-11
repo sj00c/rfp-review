@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""메모를 달기 전에 지적을 검사한다: 지어낸 인용·근거, 빠진 필드, 중복 id.
-
-- 원문: 해당 문서의 추출 텍스트에 그대로 있어야 한다(공백 무시, '…' 생략 허용).
-- 근거: 지침 추출 텍스트에 그대로 있는 문구이거나 '문서 자체 오류'(오타·빈칸·문서 안/문서 간 모순).
-- 판정: 필수수정 | 수정필요 | 확인필요. 문제없는 항목은 기록하지 않는다.
-- 고칠 곳에는 수정안, 확인필요에는 확인할 내용(수정안 칸)이 필요하다.
-
-사용법:
-  python validate_review.py numeric_findings.json review.json \
-      --guide extracted/지침.txt --doc 제안요청서=extracted/제안요청서.txt [--doc 공고문=extracted/공고문.txt]
-"""
 import argparse
 import json
 import re
