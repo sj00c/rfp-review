@@ -92,8 +92,6 @@ def from_hwpx(path):
 
 
 class MiniCFB:
-    END = 0xFFFFFFFE
-
     def __init__(self, path):
         with open(path, "rb") as fp:
             self.d = d = fp.read()
@@ -137,10 +135,10 @@ class MiniCFB:
 
     def chain(self, s):
         out, seen = [], set()
-        while s < 0xFFFFFFFA and s not in seen and s < len(self.fat) + 1:
+        while s < len(self.fat) and s not in seen:  # 끝 표시(0xFFFFFFFE 등)는 FAT 길이보다 크다
             seen.add(s)
             out.append(self.sector(s))
-            s = self.fat[s] if s < len(self.fat) else self.END
+            s = self.fat[s]
         return b"".join(out)
 
     def _walk(self, i, parent):

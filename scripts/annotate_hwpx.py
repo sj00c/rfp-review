@@ -110,6 +110,9 @@ class Para:
                     self.chars.append((ri, ti))
             self.tokens.append(toks)
         self.text = "".join(self.tokens[ri][ti][1] for ri, ti in self.chars)
+        # 공백을 뺀 글자와 원래 위치: 지적마다 여러 문단을 찾으므로 한 번만 만든다
+        self.idx = [i for i, ch in enumerate(self.text) if not ch.isspace()]
+        self.norm = "".join(self.text[i] for i in self.idx)
         # 기존 필드(메모·누름틀 등)의 문자 범위: 새 메모가 이 범위와 엇갈리지 않게 한다
         self.fields, opened, pos = [], {}, 0
         for toks in self.tokens:
@@ -128,12 +131,7 @@ class Para:
     def find(self, quote):
         """공백 무시 매칭. '…'로 생략된 인용은 앞부분~뒷부분 범위. (s, e) 문자 범위.
         생략 뒤 부분 중 하나라도 못 찾으면 None(다른 문단에서 완전히 맞는 자리를 계속 찾는다)."""
-        norm, idx = [], []
-        for i, ch in enumerate(self.text):
-            if not ch.isspace():
-                norm.append(ch)
-                idx.append(i)
-        norm = "".join(norm)
+        norm, idx = self.norm, self.idx
         parts = [WS.sub("", x) for x in re.split(r"…|\.{3,}", quote)]
         parts = [x for x in parts if x]
         if not parts or not norm:
@@ -186,11 +184,12 @@ class Para:
             new = []
             for tok in self.tokens[ri]:
                 if tok[0] == "char":
+                    # 끼워 넣는 하위 요소(형광펜)는 옆 글자의 글자 속성을 따른다
                     for _, t in sorted(by_pos.get((g, 0), []), key=lambda x: x[0]):
-                        new.append(t if t[2] is not None or t[0] == "ctrl" else (t[0], t[1], tok[2]))
+                        new.append(t if t[0] == "ctrl" else (t[0], t[1], tok[2]))
                     new.append(tok)
                     for _, t in sorted(by_pos.get((g, 1), []), key=lambda x: x[0]):
-                        new.append(t if t[2] is not None or t[0] == "ctrl" else (t[0], t[1], tok[2]))
+                        new.append(t if t[0] == "ctrl" else (t[0], t[1], tok[2]))
                     g += 1
                 else:
                     new.append(tok)
@@ -355,8 +354,7 @@ def add_memo_para_pr(header, base="0"):
     p = re.sub(r'(<hh:align\b[^>]*\bhorizontal=")\w+', r"\g<1>LEFT", p, count=1)
     p = re.sub(r'(<hh:lineSpacing type="PERCENT" value=")\d+', r"\g<1>130", p)
     p = p.replace('breakNonLatinWord="BREAK_WORD"', 'breakNonLatinWord="KEEP_WORD"')
-    out = header[:m_end] + p + header[m_end:]
-    m_props = re.search(r'(<hh:paraProperties\b[^>]*\bitemCnt=")(\d+)(")', out)
+    out = header[:m_end] + p + header[m_end:]  # m_end가 itemCnt보다 뒤라 m_props 위치는 그대로다
     out = out[:m_props.start(2)] + str(int(m_props.group(2)) + 1) + out[m_props.end(2):]
     return out, new_id
 
@@ -424,12 +422,12 @@ def annotate(a, findings, others, zin):
             MemoFactory.STYLE, MemoFactory.CHAR_PR = style[0], style[2]
         hdr, pid = add_memo_para_pr(hdr, style[1] if style else "0")
         if pid is not None:
-            changed["Contents/header.xml"] = hdr.encode("utf-8")
             MemoFactory.PARA_PR = pid
-        hdr, shapes = add_memo_shapes(changed.get("Contents/header.xml", zin.read("Contents/header.xml")).decode("utf-8"))
+        hdr, shapes = add_memo_shapes(hdr)
         if shapes:
-            changed["Contents/header.xml"] = hdr.encode("utf-8")
             MemoFactory.SHAPE = shapes
+        if pid is not None or shapes:
+            changed["Contents/header.xml"] = hdr.encode("utf-8")
 
     # 섹션 파싱 (네임스페이스 접두어와 루트 선언을 보존한다)
     sections = []
