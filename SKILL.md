@@ -40,7 +40,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 ## Steps
 
 ### 0. Start or resume
-If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --check -o <work>/extracted`. Exit 0: continue from the existing files. Exit 1 (an input changed or files missing): delete that work folder and start over — never reuse old notes or findings.
+If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --check -o <work>/extracted`. Exit 0: continue from the existing files. Exit 1 (an input changed or files missing): delete that work folder with `python <skill-dir>/scripts/extract_text.py --clean -o <work>/extracted` and start over — never reuse old notes or findings.
 
 ### 1. Convert and extract
 - RFP is `.hwp`: `python <skill-dir>/scripts/hancom.py convert <rfp.hwp> -o <work>/<stem>.hwpx` (Windows + 한/글; no packages), then use that HWPX everywhere below. If it prints `[실패]`, ask the user to save the RFP as HWPX in 한/글 (파일 → 다른 이름으로 저장 → HWPX). Other `.hwp` documents are read directly; do not convert them.
@@ -86,7 +86,7 @@ At the end of each chunk append one line `<file> <start>-<end> ✓` to `guide_it
 ```
 Then:
 `python <skill-dir>/scripts/check_numbers.py facts.json -o numeric_findings.json`
-It outputs only mismatches. If a result contradicts the source (a value read wrongly), fix `facts.json` and rerun.
+It outputs only mismatches, one finding per location. If a result contradicts the source (a value read wrongly), fix `facts.json` and rerun. Never edit `numeric_findings.json` by hand; to drop a result, fix or remove its group in `facts.json`.
 
 ### 5. Findings format
 `<work>/review.json`:
@@ -126,4 +126,4 @@ python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json rev
 - One line: 필수수정 n건, 수정필요 n건, 확인필요 n건 (from annotate's `합계:` line), noting it is an AI first-pass review. Then the 필수수정 titles, one per line.
 - The output file path(s).
 - What was not covered: missing documents, unreadable files or images, guideline items left 확인필요 for lack of data.
-Then delete the work folder. If something failed, keep the work folder and say where to resume.
+Then delete the work folder: `python <skill-dir>/scripts/extract_text.py --clean -o <work>/extracted` (not `rm`; agent harnesses may block it). If something failed, keep the work folder and say where to resume.

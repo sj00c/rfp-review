@@ -90,10 +90,15 @@ def check(facts):
             continue
         if len({x for _, x in vals}) == 1:
             continue
+        # 위치마다 지적 하나: 같은 위치에 값이 여럿이면 한 지적에 모은다
+        places = {}
         for e, x in vals:
-            others = ", ".join(entry_text(o, y) for o, y in vals if o is not e)
-            out.append(finding(len(out) + 1, c, e, f"{name} 불일치",
-                               f"이곳 {show(x)}, 다른 곳 {others}",
+            places.setdefault((e["문서"], e["위치"], e["원문"]), []).append((e, x))
+        for key, here in places.items():
+            here_txt = ", ".join(dict.fromkeys(show(x) for _, x in here))
+            others = ", ".join(entry_text(o, y) for k, group in places.items() if k != key for o, y in group)
+            problem = f"이곳 {here_txt}, 다른 곳 {others}" if others else f"이곳의 값 {here_txt}이(가) 서로 다름"
+            out.append(finding(len(out) + 1, c, here[0][0], f"{name} 불일치", problem,
                                "맞는 값으로 모든 곳을 통일", basis))
     for c in facts.get("합계", []):
         name, basis = c.get("항목", "합계"), (c.get("근거") or SELF)

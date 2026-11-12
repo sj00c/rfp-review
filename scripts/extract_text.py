@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import struct
 import sys
 import zipfile
@@ -341,14 +342,34 @@ def check_sources(outdir):
     return 0
 
 
+def clean_work(outdir):
+    """작업 폴더(<output>/.rfp-review/<stem>)를 지운다. 에이전트 하네스가 rm -rf를 막아도 지울 수 있게 한다.
+    .rfp-review 바로 아래 폴더가 아니면 지우지 않는다(사용자 폴더 보호)."""
+    work = os.path.dirname(os.path.abspath(outdir))
+    root = os.path.dirname(work)
+    if os.path.basename(root) != ".rfp-review":
+        print(f"[중단] 작업 폴더(.rfp-review/<이름>)가 아닙니다: {work}")
+        return 2
+    if os.path.isdir(work):
+        shutil.rmtree(work)
+    if os.path.isdir(root) and not os.listdir(root):
+        os.rmdir(root)
+    print(f"[삭제] {work}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="*")
     ap.add_argument("-o", "--outdir", default="extracted")
-    ap.add_argument("--check", action="store_true", help="원본이 추출 때와 같은지만 확인")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="원본이 추출 때와 같은지만 확인")
+    mode.add_argument("--clean", action="store_true", help="-o 위의 작업 폴더를 지움")
     a = ap.parse_args()
     if a.check:
         return check_sources(a.outdir)
+    if a.clean:
+        return clean_work(a.outdir)
     if not a.files:
         ap.error("추출할 파일을 주세요.")
     stems = [os.path.normcase(os.path.splitext(os.path.basename(f))[0]) for f in a.files]
