@@ -79,11 +79,44 @@ def check(findings, guide, docs):
     return errors
 
 
+ITEM_VERDICTS = ("위반", "확인필요", "적합", "해당없음")
+
+
+def check_items(items, findings, docs):
+    """items.json: 모든 항목에 판정이 있고, 위반·확인필요는 실제 지적을, 적합은 문서에 있는 인용을 가져야 한다."""
+    errors, blank = [], 0
+    ids = {f.get("id") for _, f in findings}
+    lines = [ln for d in docs.values() for ln in d]
+    for x in items:
+        label = f"항목 {x['id']}"
+        v = x.get("판정")
+        if v not in ITEM_VERDICTS:
+            blank += 1
+        elif v in ("위반", "확인필요"):
+            missing = [i for i in x.get("지적") or [] if i not in ids]
+            if not x.get("지적"):
+                errors.append(f"{label}: {v}인데 지적 id가 없습니다")
+            elif missing:
+                errors.append(f"{label}: 지적 {', '.join(missing)}이(가) findings에 없습니다")
+        elif v == "적합":
+            quote = str(x.get("원문") or "")
+            if len(nows(quote)) < 4:
+                errors.append(f"{label}: 적합의 원문이 4자 미만입니다")
+            elif not found(quote, lines):
+                errors.append(f"{label}: 적합의 원문이 문서에 없습니다 → \"{quote[:40]}\" (그대로 복사)")
+        elif not str(x.get("이유") or "").strip():
+            errors.append(f"{label}: 해당없음의 이유가 없습니다")
+    if blank:
+        errors.append(f"판정이 없는 항목 {blank}개 — items.py todo로 보고 items.py set으로 적으세요")
+    return errors
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("findings", nargs="+")
     ap.add_argument("--guide", action="append", required=True, help="지침 추출 텍스트(여러 개 가능)")
     ap.add_argument("--doc", action="append", required=True, metavar="문서명=추출텍스트")
+    ap.add_argument("--items", help="지침 항목별 판정 파일(items.py init으로 만든 것)")
     a = ap.parse_args()
 
     guide = [ln for p in a.guide for ln in load_lines(p)]
@@ -100,7 +133,14 @@ def main():
 
     errors = check(findings, guide, docs)
     counts = {v: sum(1 for _, f in findings if f.get("판정") == v) for v in VERDICTS}
-    print(f"검사: 지적 {len(findings)}건 {counts} — 오류 {len(errors)}건")
+    item_note = ""
+    if a.items:
+        with open(a.items, encoding="utf-8") as fp:
+            items = json.load(fp)["items"]
+        errors += check_items(items, findings, docs)
+        tally = {v: sum(1 for x in items if x.get("판정") == v) for v in ITEM_VERDICTS}
+        item_note = f", 항목 {len(items)}개 {tally}"
+    print(f"검사: 지적 {len(findings)}건 {counts}{item_note} — 오류 {len(errors)}건")
     for e in errors[:40]:
         print(f"[오류] {e}")
     if len(errors) > 40:

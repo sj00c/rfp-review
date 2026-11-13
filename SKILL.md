@@ -22,7 +22,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 ## Rules (they prevent wrong findings)
 1. **Only the guideline and the documents are evidence.** Do not use your own knowledge of laws, thresholds, article numbers or practice. If the guideline does not say it, do not write a memo — not even 확인필요.
 2. **Exception — objective document errors:** typos, wrong project name, leftover placeholders (`OOO`, `202O년`, empty `□`, empty scope/schedule/budget/evaluation cells), contradictions inside one document or between the given documents, arithmetic errors. Their `근거` is `문서 자체 오류`. A contradiction needs both quotes in hand.
-3. **Write only problems.** No 적합 records, no per-item coverage. Fewer, certain findings beat many weak ones.
+3. **Memos only for problems; a verdict for every checklist item.** Findings (and so memos) are written only for problems; fewer, certain findings beat many weak ones. Separately, every item of an attached checklist gets a verdict in `items.json` (step 5), so no item is skipped silently.
 4. **판정 = urgency** (memo color):
    - **필수수정** (red): a clear violation or objective error that bidders act on — eligibility/참가자격, evaluation items and scores, budget/price/amounts, submission method and deadline, contract terms — or a violation of a guideline item the guideline itself marks as 필수/필수 확인. Leaving it can void or dispute the notice.
    - **수정필요** (yellow): any other clear violation or objective error (typos, numbering, wording, wrong attachment numbers).
@@ -35,7 +35,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 
 ## Context budget
 - Never print a whole file. `python <skill-dir>/scripts/show_lines.py <file> <start>` stops at 8KB and prints `[next: N of M]`; continue from N.
-- Read each document once. Write findings straight into `review.json` as you go (step 3); there is no separate notes pass. After compaction or on resume, reload from `guide_items.md` and the JSON files, not memory.
+- Read each document once. Write findings straight into `review.json` as you go (step 3); there is no separate notes pass. After compaction or on resume, reload from `guide_items.md`, `items.json` and the other JSON files, not memory.
 
 ## Steps
 
@@ -53,10 +53,12 @@ If the work folder exists, run `python <skill-dir>/scripts/extract_text.py --che
 ### 2. Choose and read the guidelines
 - Run `python <skill-dir>/scripts/guides.py sync`. It extracts new or changed library files and lists every guideline as `- <id> | <적용 대상>` with its 추출본 path.
 - For a guideline with `(설명 없음)`, read its first ~60 lines and record one line on what it applies to (contract type, 사업 유형, 금액 범위, 기관): `guides.py describe <id> "<적용 대상>"`. This is saved; later runs only read the list.
-- Read the RFP's opening and decide 계약 유형 (용역/물품/공사) and 낙찰 방식 (협상에 의한 계약/적격심사), plus 사업명, SW 여부, 금액. Quote the RFP line for each in the first lines of `<work>/guide_items.md`; if the RFP does not state one, write `미기재` and pick the guidelines for every possible value. Pick the library guidelines whose 적용 대상 fits that type and method (e.g. 협상 → 협상에의한계약체결기준·제안서평가세부기준, 적격 → 적격심사기준). When unsure, include it. Write the chosen ids with one-line reasons below, and name the type, method and guidelines in the reply.
+- Read the RFP's opening and decide 계약 유형 (용역/물품/공사) and 낙찰 방식 (협상에 의한 계약/적격심사), plus 사업명, SW 여부, 금액. Quote the RFP line for each in the first lines of `<work>/guide_items.md`; if the RFP does not state one, write `미기재` and pick the guidelines for every possible value. Pick the library guidelines whose 적용 대상 fits that type and method. When unsure, include it. Write the chosen ids with one-line reasons below, and name the type, method and guidelines in the reply.
 - Chosen guidelines and attached ones are the evidence; their 추출본 paths go to `validate_review.py --guide` (one `--guide` each). An unchosen guideline may be used only after `guides.py search <단어...>` finds a line that clearly applies; then add that guideline to the chosen list.
 
-Read every chosen guideline whole, once. In `<work>/guide_items.md` copy only the lines that can be judged from documents (verbatim, with their tag), marking ones the guideline calls 필수. Skip internal approvals and procedures outside the documents.
+Turn the attached checklists (점검표) into items: `python <skill-dir>/scripts/items.py init extracted/<checklist>.txt [...] -o items.json`. Every line of a checklist becomes one item with an empty verdict. Do not itemize long laws or manuals from the library (it warns above 300 items); search those with `guides.py search` and quote them as 근거.
+
+Read the items once with `python <skill-dir>/scripts/items.py todo items.json` (8KB at a time; it lists the items that still have no verdict, so continue by marking them in step 5). Read other chosen guidelines whole, once, with `show_lines.py`.
 
 ### 3. Read the documents once and write findings as you go
 Read every extracted document chunk by chunk. After each chunk:
@@ -88,7 +90,14 @@ Then:
 `python <skill-dir>/scripts/check_numbers.py facts.json -o numeric_findings.json`
 It outputs only mismatches, one finding per location. If a result contradicts the source (a value read wrongly), fix `facts.json` and rerun. Never edit `numeric_findings.json` by hand; to drop a result, fix or remove its group in `facts.json`.
 
-### 5. Findings format
+### 5. Judge every checklist item
+For each item in `items.py todo items.json`, decide with the RFP text you have read (search the extracted text for absences, Rule 6), then record it:
+- 위반 / 확인필요: first write the finding in `review.json` (format below), then `items.py set items.json 위반 "<item id>" --finding R7` (several items may share one finding; a 기준 result from check_numbers is `--finding N3`).
+- 적합: `items.py set items.json 적합 "<item id>" --quote "<RFP text that satisfies it>"`.
+- 해당없음: `items.py set items.json 해당없음 "<item id or tag prefix>" --reason "<한 줄>"` — for headings, procedures outside the documents (결재, 낙찰 후 계약 절차), or a whole section for another contract type or award method (e.g. `"[공사_특화!"` for a 용역 RFP). Use a prefix only when the whole section clearly does not apply.
+Repeat `todo` until it prints `[남은 항목] 0개`. 적합 and 해당없음 do not become memos.
+
+### 6. Findings format
 `<work>/review.json`:
 ```json
 {"findings": [
@@ -105,13 +114,14 @@ It outputs only mismatches, one finding per location. If a result contradicts th
 - A long `원문` may skip text with `…` (the pieces stay in order on one line).
 - Quote at least 4 characters next to the problem; never quote `[수식…]`/`[그림]` markers.
 
-### 6. Validate (repeat until 0 errors)
+### 7. Validate (repeat until 0 errors)
 ```bash
-python <skill-dir>/scripts/validate_review.py numeric_findings.json review.json --guide <지침 추출본> [--guide …] --doc 제안요청서=extracted/<rfp>.txt [--doc 공고문=extracted/<notice>.txt]
+python <skill-dir>/scripts/validate_review.py numeric_findings.json review.json --items items.json --guide <지침 추출본> [--guide …] --doc 제안요청서=extracted/<rfp>.txt [--doc 공고문=extracted/<notice>.txt]
 ```
+It also fails while any item has no verdict, a 위반/확인필요 item points to a missing finding, or a 적합 quote is not in the documents. Without an attached checklist there is no `items.json`; omit `--items`.
 Fix the cause (re-copy the quote, drop an unsupported finding). Never weaken a finding just to pass, and never delete one without a reason.
 
-### 7. Annotate
+### 8. Annotate
 On the RFP:
 ```bash
 python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json review.json --doc 제안요청서 -o "<output>/<원본stem>_검토메모.hwpx"
@@ -122,7 +132,7 @@ python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json rev
 - The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos.
 - On Windows with 한/글, check the result: `python <skill-dir>/scripts/hancom.py check <result.hwpx>` (`[열림] … n쪽`). If it fails, `hancom.py resave <result.hwpx> -o <result>_재저장.hwpx`, check that file, and give the user the one that opens. Without 한/글, say the file was not opened in 한/글.
 
-### 8. Reply (Korean, short)
+### 9. Reply (Korean, short)
 - One line: 필수수정 n건, 수정필요 n건, 확인필요 n건 (from annotate's `합계:` line), noting it is an AI first-pass review. Then the 필수수정 titles, one per line.
 - The output file path(s).
 - What was not covered: missing documents, unreadable files or images, guideline items left 확인필요 for lack of data.
