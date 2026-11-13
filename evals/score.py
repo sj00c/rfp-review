@@ -17,6 +17,18 @@ E = os.path.dirname(os.path.abspath(__file__))
 PARA = re.compile(r"문단\s*(\d+)")
 
 
+def paras_of(spec):
+    """answers.json의 문단 목록: 숫자 또는 'a-b' 범위(누락형 지적은 조항 구간 어디에 달아도 맞음)."""
+    out = set()
+    for x in spec:
+        if isinstance(x, str) and "-" in x:
+            a, b = (int(v) for v in x.split("-"))
+            out.update(range(a, b + 1))
+        else:
+            out.add(int(x))
+    return out
+
+
 def findings(run):
     work = glob.glob(os.path.join(run, "output", ".rfp-review", "*"))
     out = []
@@ -57,8 +69,8 @@ def main():
             m = PARA.search(f.get("위치", ""))
             if m:
                 paras.setdefault(int(m.group(1)), f)
-        hit = {i["id"] for i in ans["issues"] if paras.keys() & set(i["문단"])}
-        known = {n for i in ans["issues"] + ans.get("neutral", []) for n in i["문단"]}
+        hit = {i["id"] for i in ans["issues"] if paras.keys() & paras_of(i["문단"])}
+        known = {n for i in ans["issues"] + ans.get("neutral", []) for n in paras_of(i["문단"])}
         fp_paras = sorted(set(paras) - known)
         res = {}
         if os.path.isfile(os.path.join(run, "result.json")):
