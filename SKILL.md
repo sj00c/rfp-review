@@ -16,7 +16,7 @@ Scripts are in `scripts/` next to this file (`<skill-dir>`); always run them by 
 - **RFP** (required): the draft 제안요청서, `.hwpx` or `.hwp`. Memos can only be written into HWPX, so a `.hwp` RFP is converted first (step 1).
 - PDF is read only if `pdfplumber` or `pypdf` is installed; otherwise `[실패]` says so — ask for the original file (HWPX/DOCX/XLSX) or `.txt`. Scanned PDFs and images have no text and are not read.
 - Optional related documents (공고문, 원가계산서, 과업내용서 …): used only for cross-checks.
-- Output: `<RFP folder>/output/`, or the folder the user names. Never the skill folder or the shell cwd.
+- Output: the RFP's own folder (the result sits next to the original), or the folder the user names. Never the skill folder or the shell cwd.
 - Work folder: `<output>/.rfp-review/<RFP stem>/`. All intermediates live there; run the commands below from that folder (relative paths below are inside it). Never modify the user's files.
 
 ## Rules (they prevent wrong findings)

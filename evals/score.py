@@ -30,7 +30,7 @@ def paras_of(spec):
 
 
 def findings(run):
-    work = glob.glob(os.path.join(run, "output", ".rfp-review", "*"))
+    work = glob.glob(os.path.join(run, "**", ".rfp-review", "*"), recursive=True)
     out = []
     for w in work:
         for fn in ("numeric_findings.json", "review.json"):
@@ -43,7 +43,7 @@ def findings(run):
 
 def items_coverage(run):
     """items.json이 있으면 (판정한 항목 수, 전체 항목 수)."""
-    for p in glob.glob(os.path.join(run, "output", ".rfp-review", "*", "items.json")):
+    for p in glob.glob(os.path.join(run, "**", ".rfp-review", "*", "items.json"), recursive=True):
         with open(p, encoding="utf-8") as fp:
             items = json.load(fp)["items"]
         return sum(1 for x in items if x.get("판정")), len(items)
