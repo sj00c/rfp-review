@@ -94,7 +94,7 @@ It outputs only mismatches, one finding per location. If a result contradicts th
 For each item in `items.py todo items.json`, decide with the RFP text you have read (search the extracted text for absences, Rule 6), then record it:
 - 위반 / 확인필요: first write the finding in `review.json` (format below), then `items.py set items.json 위반 "<item id>" --finding R7,R8` (a 기준 result from check_numbers is `N3`). When the item is violated in several places (e.g. 인쇄·편철·밀봉 제출 요구 in three paragraphs), write one finding per place and list them all; several items may share one finding.
 - 적합: `items.py set items.json 적합 "<item id>" --quote "<RFP text that satisfies it>"`.
-- 해당없음: `items.py set items.json 해당없음 "<item id or tag prefix>" --reason "<한 줄>"` — for headings, procedures outside the documents (결재, 낙찰 후 계약 절차), or a whole section for another contract type or award method (e.g. `"[공사_특화!"` for a 용역 RFP). Use a prefix only when the whole section clearly does not apply.
+- 해당없음: `items.py set items.json 해당없음 "<tag>" ["<tag>" …] --reason "<한 줄>"` — for headings, procedures outside the documents (결재, 낙찰 후 계약 절차), or a whole section for another contract type or award method (e.g. `"[공사_특화!"` for a 용역 RFP). A sheet prefix ending in `!` marks the whole sheet; use it only when the whole sheet clearly does not apply. Otherwise give exact tags (as printed by `todo`); several tags per call are fine.
 Repeat `todo` until it prints `[남은 항목] 0개`. 적합 and 해당없음 do not become memos.
 
 ### 6. Findings format

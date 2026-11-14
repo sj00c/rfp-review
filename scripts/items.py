@@ -93,12 +93,17 @@ def set_verdict(path, keys, verdict, finding, quote, reason):
     if verdict == "해당없음" and not reason:
         print("[중단] 해당없음에는 --reason <이유>가 필요합니다.")
         return 2
-    def match(x, k):  # id 전체, id 앞부분, 또는 위치 태그 앞부분('[공사_특화!')
-        return x["id"].startswith(k) or x["id"].split(" ", 1)[-1].startswith(k)
+    def match(x, k):
+        """id나 위치 태그가 정확히 같거나, '!'로 끝나는 시트 접두어('[공사_특화!')로 시작하면 해당.
+        그 밖의 앞부분 일치는 받지 않는다('[시트!1'이 10~19행까지 잡히는 실수를 막는다)."""
+        tag = x["id"].split(" ", 1)[-1]
+        if k in (x["id"], tag):
+            return True
+        return k.endswith("!") and (x["id"].startswith(k) or tag.startswith(k))
 
     hit = [x for x in data["items"] if any(match(x, k) for k in keys)]
     if not hit:
-        print(f"[없음] {', '.join(keys)} — todo에 보이는 id(또는 그 앞부분)를 쓰세요.")
+        print(f"[없음] {', '.join(keys)} — todo에 보이는 위치 태그 그대로, 또는 시트 전체는 '[시트!'로 쓰세요.")
         return 1
     for x in hit:
         x["판정"] = verdict
@@ -128,7 +133,7 @@ def main():
     s = sub.add_parser("set")
     s.add_argument("items")
     s.add_argument("verdict", choices=VERDICTS)
-    s.add_argument("ids", nargs="+", help="항목 id 또는 앞부분(여러 개 가능)")
+    s.add_argument("ids", nargs="+", help="항목 id·위치 태그, 또는 시트 전체는 '[시트!'(여러 개 가능)")
     s.add_argument("--finding", help="위반·확인필요: review.json/numeric_findings.json의 지적 id(쉼표로 여러 개)")
     s.add_argument("--quote", help="적합: 그렇게 본 RFP 원문")
     s.add_argument("--reason", help="해당없음: 이유 한 줄")
