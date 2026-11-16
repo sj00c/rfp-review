@@ -13,7 +13,6 @@ import xml.etree.ElementTree as ET
 
 
 def clean(s):
-    """공백·줄바꿈을 한 칸으로. 셀 안 줄바꿈이 남으면 위치 표시 없는 줄이 생겨 인용 검사가 깨진다."""
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -36,14 +35,12 @@ def from_hwpx(path):
                     walk(ch, (tno, None))
                 return
             if tag in AREA:
-                # 머리말·꼬리말·각주·미주: annotate_hwpx는 여기에 메모를 달지 않으므로 위치 표시에 밝힌다
                 outer, state["area"] = state["area"], " " + AREA[tag]
                 for ch in el:
                     walk(ch, cell)
                 state["area"] = outer
                 return
             if tag == "fieldBegin":
-                # 기존 메모·누름틀 안 문단: 번호는 annotate_hwpx와 맞춰 세되 RFP 본문으로 내보내지 않는다
                 state["memo"] += 1
                 for ch in el:
                     walk(ch, cell)
@@ -56,7 +53,6 @@ def from_hwpx(path):
                     walk(ch, (cell[0], rc))
                 return
             if tag == "p":
-                # 직계 run 안의 텍스트만 모아 중첩 표 문단이 중복되지 않게 한다
                 parts, objs = [], []
                 for run in el:
                     if not run.tag.endswith("}run"):
@@ -65,11 +61,10 @@ def from_hwpx(path):
                         kind = t.tag.rsplit("}", 1)[-1]
                         if kind == "t":
                             parts.append(t.text or "")
-                            for sub in t:  # 탭·줄바꿈 표시는 글자가 없다. 빼면 앞뒤 단어가 붙는다
+                            for sub in t:
                                 parts.append(" " if sub.tag.rsplit("}", 1)[-1] in ("tab", "lineBreak", "nbSpace", "fwSpace") else "")
                                 parts.append(sub.tail or "")
                         elif kind == "equation":
-                            # 수식은 본문 글자가 아니라 개체다. 빼면 평점산식 등이 '공란'으로 보여 허위 지적이 나온다.
                             sc = next((x for x in t if x.tag.endswith("}script")), None)
                             objs.append(f"[수식: {clean(sc.text or '')}]" if sc is not None else "[수식]")
                         elif kind in ("pic", "ole"):
@@ -78,11 +73,9 @@ def from_hwpx(path):
                 where = state["area"] + (f" 표{cell[0]} {cell[1][0]}-{cell[1][1]}" if cell and cell[1] else "")
                 if txt:
                     state["n"] += 1
-                    # 표 안 문단에는 표 번호와 행-열을 붙인다. 없으면 모델이 배점·등급을 다른 항목에 잘못 붙인다.
                     if not state["memo"]:
                         out.append(f"[문단 {state['n']}{where}] {' '.join([txt] + objs)}")
                 elif objs and not state["memo"]:
-                    # 글자 없는 문단은 번호를 매기지 않는다(annotate_hwpx와 번호를 맞춘다). 개체만 알린다.
                     out.append(f"[문단 {state['n']} 뒤{where}] {' '.join(objs)}")
             for ch in el:
                 walk(ch, cell)
@@ -136,7 +129,7 @@ class MiniCFB:
 
     def chain(self, s):
         out, seen = [], set()
-        while s < len(self.fat) and s not in seen:  # 끝 표시(0xFFFFFFFE 등)는 FAT 길이보다 크다
+        while s < len(self.fat) and s not in seen:
             seen.add(s)
             out.append(self.sector(s))
             s = self.fat[s]
@@ -194,7 +187,7 @@ def from_hwp(path):
                 i += 4
             rec = data[i:i + size]
             i += size
-            if tag == 88 and len(rec) >= 6:  # HWPTAG_EQEDIT: 수식 스크립트. 직전 문단에 붙인다(빼면 '공란'으로 보인다)
+            if tag == 88 and len(rec) >= 6:
                 ln = struct.unpack("<H", rec[4:6])[0]
                 script = clean(rec[6:6 + ln * 2].decode("utf-16-le", "ignore"))
                 mark = f"[수식: {script}]"
@@ -203,17 +196,17 @@ def from_hwp(path):
                 else:
                     out.append(f"[문단 0 뒤] {mark}")
                 continue
-            if tag != 67:  # HWPTAG_PARA_TEXT
+            if tag != 67:
                 continue
             chars, j = [], 0
             while j + 2 <= len(rec):
                 c = struct.unpack("<H", rec[j:j + 2])[0]
                 if c < 32:
                     if c in (0, 10, 13, 24, 25, 26, 27, 28, 29, 30, 31):
-                        if c in (10, 30, 31):  # 줄바꿈·묶음빈칸·고정폭빈칸: 버리면 양쪽 단어가 붙는다
+                        if c in (10, 30, 31):
                             chars.append(" ")
                         j += 2
-                    else:  # 인라인/확장 컨트롤: 8 wchar
+                    else:
                         if c == 9:
                             chars.append("\t")
                         j += 16
@@ -238,7 +231,7 @@ def from_hwp(path):
 
 def from_pdf(path):
     try:
-        import pdfplumber  # 표·줄 순서를 더 잘 지킨다
+        import pdfplumber
         with pdfplumber.open(path) as pdf:
             pages = [page.extract_text() or "" for page in pdf.pages]
     except ImportError:
@@ -274,7 +267,6 @@ def from_xlsx(path):
         names = set(z.namelist())
         shared = []
         if "xl/sharedStrings.xml" in names:
-            # 서식이 섞인 글자(r/t)도 합친다. 읽기 표시(rPh)는 본문이 아니므로 뺀다.
             for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(X + "si"):
                 ts = si.findall(X + "t") + si.findall(f"{X}r/{X}t")
                 shared.append("".join(t.text or "" for t in ts))
@@ -291,7 +283,6 @@ def from_xlsx(path):
                     if kind == "inlineStr":
                         text = "".join(t.text or "" for t in c.findall(f"{X}is/{X}t") + c.findall(f"{X}is/{X}r/{X}t"))
                     elif v is None:
-                        # 계산값이 저장되지 않은 수식은 빈 칸이 아니다. 수식을 그대로 보여 준다.
                         text = f"={f.text}(계산값 없음)" if f is not None and f.text else ""
                     elif kind == "s":
                         text = shared[int(v.text)]
@@ -324,7 +315,6 @@ def sha256(path):
 
 
 def check_sources(outdir):
-    """_sources.json의 원본이 그대로인지. 바뀌었거나 없으면 1."""
     path = os.path.join(outdir, "_sources.json")
     if not os.path.isfile(path):
         print(f"[재시작] {path} 없음 — 처음부터 추출하세요.")
@@ -343,8 +333,6 @@ def check_sources(outdir):
 
 
 def clean_work(outdir):
-    """작업 폴더(<output>/.rfp-review/<stem>)를 지운다. 에이전트 하네스가 rm -rf를 막아도 지울 수 있게 한다.
-    .rfp-review 바로 아래 폴더가 아니면 지우지 않는다(사용자 폴더 보호)."""
     work = os.path.dirname(os.path.abspath(outdir))
     root = os.path.dirname(work)
     if os.path.basename(root) != ".rfp-review":
@@ -412,7 +400,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")  # 하네스가 파이프로 읽어도 UTF-8로 나가게
+    sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())
 

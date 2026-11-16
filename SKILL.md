@@ -104,13 +104,14 @@ Repeat `todo` until it prints `[남은 항목] 0개`. 적합 and 해당없음 do
   {"id": "R1", "판정": "필수수정", "문서": "제안요청서", "위치": "[문단 61]",
    "원문": "제안서 인쇄본 10부와 USB 1개를 밀봉하여 제출",
    "요약": "인쇄본 제출 요구 삭제",
-   "문제점": "지침은 전자 제출을 원칙으로 합니다.",
-   "수정안": "\"제안서는 전자 파일로 제출한다\"로 바꿔 주세요.",
+   "문제점": "지침의 전자 제출 원칙과 어긋남",
+   "수정안": "'제안서는 전자 파일로 제출한다'로 변경",
    "근거": "<지침 문구 그대로 | 문서 자체 오류>"}
 ]}
 ```
 - `id`: `R1`, `R2` … (`N…` is used by check_numbers). `문서` is the document name used with `--doc` below. Put findings on the RFP whenever the problem is in the RFP; for a contradiction with another document, quote the RFP side and name the other side in `문제점`. Findings on other documents are listed in the RFP's summary memo. One finding per location; the same problem in two places is two findings.
-- Keep memos short: `요약` is the memo title (≤ 25자, not cut). `문제점` one sentence (≤ 80자). `수정안` the text to paste or, for 확인필요, what to confirm (≤ 100자). `근거` the shortest guideline line that proves it. Longer text is cut with `…`. Do not invent legal wording.
+- Keep memos short: `요약` is the memo title (≤ 25자, not cut). `문제점` one phrase (≤ 80자). `수정안` the text to paste or, for 확인필요, what to confirm (≤ 100자). `근거` the shortest guideline line that proves it. Longer text is cut with `…`. Do not invent legal wording.
+- `문제점` and `수정안` are 개조식: one phrase ending in a noun form (`~함`, `~없음`, `~필요`, `~로 변경`, `~ 삭제`, `~ 확인`), never `~습니다`, `~합니다`, `~주세요`, `~한다`. Text to paste goes in quotes. validate_review.py rejects 서술식 endings.
 - A long `원문` may skip text with `…` (the pieces stay in order on one line).
 - Quote at least 4 characters next to the problem; never quote `[수식…]`/`[그림]` markers.
 
@@ -126,7 +127,8 @@ On the RFP:
 ```bash
 python <skill-dir>/scripts/annotate_hwpx.py <rfp.hwpx> numeric_findings.json review.json --doc 제안요청서 -o "<output>/<원본stem>_검토메모.hwpx"
 ```
-- Highlight: yellow = 고칠 곳 (필수수정·수정필요), sky blue = 확인필요. The memo balloon color shows urgency: red = 필수수정, yellow = 수정필요, blue = 확인필요, grey = summary. Memo text uses the document's own 메모 style (9pt) so balloons stay small. The summary memo is short: counts, how to handle, and only findings it could not place in the body; it does not list every title (each memo has its own). It carries findings it cannot place and findings on other documents, with their location.
+- Highlight: yellow = 고칠 곳 (필수수정·수정필요), sky blue = 확인필요. The memo balloon color shows urgency: red = 필수수정, yellow = 수정필요, blue = 확인필요, grey = summary. Memo text uses the document's own 메모 style (9pt) so balloons stay small. Each memo is a title plus `- 문제`, `- 수정`/`- 확인`, `- 근거` bullets (no 근거 line for `문서 자체 오류`).
+- The grey summary memo on the first paragraph lists only what to fix, in at most 5 lines: counts, then 필수수정 and 수정필요 titles (overflow becomes `외 n건`). Findings it cannot place in the body and findings on other documents come first with their location and fix, and are never cut.
 - If an existing file has that name, it writes `_2`, `_3` … and prints the real path. It never overwrites.
 - Findings whose `위치` has 머리말/꼬리말/각주/미주 always go to the summary memo (`요약 메모로`); that is final. Any other `요약 메모로` line means the quote was not matched in the HWPX: shorten it to text inside one body paragraph, validate, and annotate again. Delete only the bad file you just created; never an older result.
 - The review copy drops document scripts (`Scripts/`); with them 한/글 may refuse to open a file with added memos.

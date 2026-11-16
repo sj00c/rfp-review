@@ -11,7 +11,6 @@ OPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
 
 
 def evaluate(value):
-    """숫자 또는 사칙연산 식을 정확한 분수로 계산한다. 그 밖의 식은 ValueError."""
     if isinstance(value, bool):
         raise ValueError(f"숫자가 아님: {value!r}")
     if isinstance(value, (int, float)):
@@ -27,7 +26,6 @@ def evaluate(value):
         if isinstance(node, ast.Constant) and type(node.value) is int:
             return Fraction(node.value)
         if isinstance(node, ast.Constant) and type(node.value) is float:
-            # float을 거치지 않고 적힌 숫자 그대로 분수로 만든다(17자리 이상도 정확)
             return Fraction(ast.get_source_segment(src, node).replace("_", ""))
         if isinstance(node, ast.BinOp) and type(node.op) in OPS:
             return OPS[type(node.op)](ev(node.left), ev(node.right))
@@ -48,8 +46,8 @@ def show(x):
     return f"{float(x):,.2f}".rstrip("0").rstrip(".")
 
 
-def entry_text(e, x):
-    return f"{e['문서']} {e['위치']} {show(x)}"
+def entry_text(e):
+    return f"{e['문서']} '{e['원문']}'"
 
 
 def finding(n, c, entry, 요약, 문제점, 수정안, 근거):
@@ -59,13 +57,11 @@ def finding(n, c, entry, 요약, 문제점, 수정안, 근거):
 
 
 ENTRY = ("문서", "위치", "원문", "값")
-# 기준 그룹의 조건: 키 → (만족 판정, 문구)
 BOUNDS = {"이상": (lambda x, b: x >= b, "이상"), "이하": (lambda x, b: x <= b, "이하"),
           "초과": (lambda x, b: x > b, "초과"), "미만": (lambda x, b: x < b, "미만")}
 
 
 def entries(c, key):
-    """c[key]의 항목들. 문서·위치·원문·값이 모두 있어야 한다(KeyError로 알린다)."""
     items = c[key] if isinstance(c[key], list) else [c[key]]
     if not items:
         raise KeyError(f"{key}이(가) 비어 있음")
@@ -90,14 +86,13 @@ def check(facts):
             continue
         if len({x for _, x in vals}) == 1:
             continue
-        # 위치마다 지적 하나: 같은 위치에 값이 여럿이면 한 지적에 모은다
         places = {}
         for e, x in vals:
             places.setdefault((e["문서"], e["위치"], e["원문"]), []).append((e, x))
         for key, here in places.items():
             here_txt = ", ".join(dict.fromkeys(show(x) for _, x in here))
-            others = ", ".join(entry_text(o, y) for k, group in places.items() if k != key for o, y in group)
-            problem = f"이곳 {here_txt}, 다른 곳 {others}" if others else f"이곳의 값 {here_txt}이(가) 서로 다름"
+            others = ", ".join(dict.fromkeys(entry_text(o) for k, group in places.items() if k != key for o, _ in group))
+            problem = f"이곳 {here_txt} ≠ {others}" if others else f"이곳 값 {here_txt} 서로 다름"
             out.append(finding(len(out) + 1, c, here[0][0], f"{name} 불일치", problem,
                                "맞는 값으로 모든 곳을 통일", basis))
     for c in facts.get("합계", []):

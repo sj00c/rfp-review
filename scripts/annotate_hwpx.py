@@ -11,19 +11,18 @@ import xml.etree.ElementTree as ET
 
 HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 HP = "{%s}" % HP_NS
-MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))  # 한/글이 메모 필드에 쓰는 값
-VERDICTS = ("필수수정", "수정필요", "확인필요")  # 위급한 순서. 메모를 다는 순서로 쓴다
-# 형광펜: 고칠 곳은 노랑, 확인할 곳은 하늘. 위급한 정도는 메모 풍선 색으로 나눈다
+MEMO_FIELD_ID = str(int.from_bytes(b"%%me", "big"))
+VERDICTS = ("필수수정", "수정필요", "확인필요")
 HIGHLIGHT = {"필수수정": "#FFFF00", "수정필요": "#FFFF00", "확인필요": "#9FE2FF"}
-# (배경, 테두리, 선택했을 때 배경)
 MEMO_COLOR = {"필수수정": ("#FFE1E1", "#E04848", "#FFC2C2"),
               "수정필요": ("#FFF4C2", "#D9A400", "#FFE88A"),
               "확인필요": ("#E1EFFF", "#4A86D9", "#C2DCFF"),
               "요약": ("#F2F2F2", "#8C8C8C", "#E0E0E0")}
-DEFAULT_SHAPE = "65535"  # 한/글 기본 메모 모양
+DEFAULT_SHAPE = "65535"
 LABEL = {"필수수정": "필수 수정", "수정필요": "수정 필요", "확인필요": "확인 요청"}
 SELF = "문서 자체 오류"
 MEMO_SEP = "─" * 16
+SUMMARY_LINES = 5
 WS = re.compile(r"\s+")
 
 
@@ -32,7 +31,6 @@ def local(tag):
 
 
 def load_findings(paths, doc):
-    """(이 문서의 지적, 다른 문서의 지적). 다른 문서는 메모를 달 HWPX가 없으므로 요약 메모에 싣는다."""
     every = []
     for p in paths:
         with open(p, encoding="utf-8") as fp:
@@ -41,13 +39,10 @@ def load_findings(paths, doc):
 
 
 def para_hint(f):
-    """위치의 [문단 n] 번호들. 같은 인용이 여러 문단에 있을 때 이 문단을 먼저 찾는다."""
     return [int(n) for n in re.findall(r"문단\s*(\d+)", f["위치"])]
 
 
 def strip_scripts(names, read):
-    """문서 스크립트와 content.hpf의 item·itemref를 뺀다. 스크립트가 있으면 한/글이 메모 단 파일을 '손상' 경고로 막는다.
-    (뺄 파일, {이름: 바뀐 바이트})"""
     scripts = {n for n in names if n.startswith("Scripts/") and not n.endswith("/")}
     hpf_name = "Contents/content.hpf"
     if not scripts or hpf_name not in names:
@@ -63,7 +58,6 @@ def strip_scripts(names, read):
 
 
 def publish(data, path):
-    """덮어쓰지 않고 path, path_2, path_3… 중 빈 이름에 쓴다. 실제 경로를 돌려준다."""
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
     stem, ext = os.path.splitext(os.path.basename(path))
@@ -77,20 +71,18 @@ def publish(data, path):
             with fp:
                 fp.write(data)
         except BaseException:
-            os.remove(dest)  # 쓰다 실패한 반쪽 파일을 결과로 남기지 않는다
+            os.remove(dest)
             raise
         return dest
     raise FileExistsError(f"빈 이름을 찾지 못했습니다: {path}")
 
 
 class Para:
-    """문단의 직계 run들을 (char | sub | ctrl) 토큰 열로 펼친다."""
-
     def __init__(self, p):
         self.p = p
         self.runs = [r for r in p if local(r.tag) == "run"]
         self.tokens = []
-        self.chars = []   # 전역 문자 → (run idx, token idx)
+        self.chars = []
         for ri, r in enumerate(self.runs):
             toks = []
             for c in r:
@@ -99,7 +91,7 @@ class Para:
                     if c.text:
                         for ch in c.text:
                             toks.append(("char", ch, attrib))
-                    for sub in c:  # 하위 요소 뒤 글자(tail)는 토큰으로만 옮긴다. 트리는 rebuild()에서만 바꾼다
+                    for sub in c:
                         toks.append(("sub", sub, attrib))
                         for ch in sub.tail or "":
                             toks.append(("char", ch, attrib))
@@ -110,10 +102,8 @@ class Para:
                     self.chars.append((ri, ti))
             self.tokens.append(toks)
         self.text = "".join(self.tokens[ri][ti][1] for ri, ti in self.chars)
-        # 공백을 뺀 글자와 원래 위치: 지적마다 여러 문단을 찾으므로 한 번만 만든다
         self.idx = [i for i, ch in enumerate(self.text) if not ch.isspace()]
         self.norm = "".join(self.text[i] for i in self.idx)
-        # 기존 필드(메모·누름틀 등)의 문자 범위: 새 메모가 이 범위와 엇갈리지 않게 한다
         self.fields, opened, pos = [], {}, 0
         for toks in self.tokens:
             for kind, val, _ in toks:
@@ -125,12 +115,10 @@ class Para:
                             opened[x.get("id")] = pos
                         elif local(x.tag) == "fieldEnd" and x.get("beginIDRef") in opened:
                             self.fields.append((opened.pop(x.get("beginIDRef")), pos))
-        self.inserts = []  # (char pos, 0=before/1=after, order, token)
-        self.ranges = []   # 이미 메모를 단 (s, e, memo paragraphs list)
+        self.inserts = []
+        self.ranges = []
 
     def find(self, quote):
-        """공백 무시 매칭. '…'로 생략된 인용은 앞부분~뒷부분 범위. (s, e) 문자 범위.
-        생략 뒤 부분 중 하나라도 못 찾으면 None(다른 문단에서 완전히 맞는 자리를 계속 찾는다)."""
         norm, idx = self.norm, self.idx
         parts = [WS.sub("", x) for x in re.split(r"…|\.{3,}", quote)]
         parts = [x for x in parts if x]
@@ -148,20 +136,15 @@ class Para:
         return idx[a], idx[b - 1] + 1
 
     def fit(self, s, e):
-        """기존 필드와 범위가 엇갈리지 않게 줄인다.
-
-        같은 문자 사이(gap)에서는 [새 메모 끝] < [기존 필드 ctrl] < [새 메모 시작] 순서로 들어가므로
-        새 메모의 시작을 s+0.4, 끝을 e-0.4로 보고 구간이 한쪽만 겹치는지 판단한다.
-        """
         for _ in range(len(self.fields) + 1):
             moved = False
             for fs, fe in self.fields:
                 a0, a1 = s + 0.4, e - 0.4
-                if a0 < fs < a1 < fe:      # 필드 시작이 새 범위 안 → 필드 앞에서 끝낸다
+                if a0 < fs < a1 < fe:
                     e, moved = fs, True
-                elif fs < a0 < fe < a1:    # 필드 끝이 새 범위 안 → 필드 뒤에서 시작한다
+                elif fs < a0 < fe < a1:
                     s, moved = fe, True
-                if e <= s:                  # 줄이다 비면 필드 안쪽에 같은 경계로 넣는다(중첩)
+                if e <= s:
                     return (fs, fe) if fe > fs else (s, s + 1)
             if not moved:
                 break
@@ -184,7 +167,6 @@ class Para:
             new = []
             for tok in self.tokens[ri]:
                 if tok[0] == "char":
-                    # 끼워 넣는 하위 요소(형광펜)는 옆 글자의 글자 속성을 따른다
                     for _, t in sorted(by_pos.get((g, 0), []), key=lambda x: x[0]):
                         new.append(t if t[0] == "ctrl" else (t[0], t[1], tok[2]))
                     new.append(tok)
@@ -216,25 +198,22 @@ class Para:
                     val.tail = None
                     cur.append(val)
                     last_sub = val
-        # 레이아웃 캐시 제거: 한/글이 열 때 다시 계산한다
         for c in [c for c in self.p if local(c.tag).lower() == "linesegarray"]:
             self.p.remove(c)
 
 
 class MemoFactory:
-    def __init__(self, author, start_number):
+    def __init__(self, author, start_number, used_ids, shapes, para_pr, style, char_pr):
         self.author = author
         self.n = start_number
+        self.used_ids = used_ids
+        self.shapes, self.para_pr, self.style, self.char_pr = shapes, para_pr, style, char_pr
         now_utc = datetime.now(timezone.utc)
-        # 한/글 파일: CreateDateTime은 현지 시각 + 'Z', Command의 FILETIME은 UTC
         self.created = now_utc.astimezone().strftime("%Y-%m-%dT%H:%M:%SZ")
         ft = int((now_utc.timestamp() + 11644473600) * 10_000_000)
         self.ft_lo, self.ft_hi = ft & 0xFFFFFFFF, ft >> 32
-        self.seq = 0
-        self.used_ids = set()
 
     def renumber(self, records):
-        """메모 번호를 문서 순서(문단 번호, 시작 위치)대로 다시 매긴다. records: [(정렬키, fieldBegin)]"""
         base = self.n - len(records)
         for i, (_, fb) in enumerate(sorted(records, key=lambda r: r[0]), 1):
             num = base + i
@@ -249,16 +228,13 @@ class MemoFactory:
                     shape = prm.text.split("/")[1]
                     prm.text = f"MEMO/{shape}/{num}/{self.ft_lo}/{self.ft_hi}//\\;;"
 
-    SHAPE = {}  # 판정 → memoPr id. annotate()에서 header.xml에 추가한 뒤 채운다
-
     def make(self, lines, kind):
-        shape = self.SHAPE.get(kind, DEFAULT_SHAPE)
+        shape = self.shapes.get(kind, DEFAULT_SHAPE)
         self.n += 1
-        while True:  # 문서에 이미 있는 필드 id와 겹치면 fieldEnd가 엉뚱한 필드를 닫는다
-            self.seq += 1
-            fid = str(1_900_000_000 + self.seq * 7919 % 99_999_999)
-            if fid not in self.used_ids:
-                break
+        fid = 1_900_000_000 + len(self.used_ids)
+        while str(fid) in self.used_ids:
+            fid += 1
+        fid = str(fid)
         self.used_ids.add(fid)
         begin_ctrl = ET.Element(HP + "ctrl")
         fb = ET.SubElement(begin_ctrl, HP + "fieldBegin", {
@@ -282,29 +258,13 @@ class MemoFactory:
         ET.SubElement(end_ctrl, HP + "fieldEnd", {"beginIDRef": fid, "fieldid": MEMO_FIELD_ID})
         return begin_ctrl, end_ctrl, sl
 
-    PARA_PR = "0"  # 메모 문단 모양(왼쪽 정렬). annotate()에서 header.xml에 추가한 id로 바꾼다
-    STYLE, CHAR_PR = "0", "0"  # 문서에 '메모' 스타일이 있으면 그 스타일·글자 모양
-
-    @staticmethod
-    def add_lines(sublist, lines):
+    def add_lines(self, sublist, lines):
         for line in lines:
             p = ET.SubElement(sublist, HP + "p", {
-                "id": "0", "paraPrIDRef": MemoFactory.PARA_PR, "styleIDRef": MemoFactory.STYLE, "pageBreak": "0",
+                "id": "0", "paraPrIDRef": self.para_pr, "styleIDRef": self.style, "pageBreak": "0",
                 "columnBreak": "0", "merged": "0"})
-            run = ET.SubElement(p, HP + "run", {"charPrIDRef": MemoFactory.CHAR_PR})
+            run = ET.SubElement(p, HP + "run", {"charPrIDRef": self.char_pr})
             ET.SubElement(run, HP + "t").text = line
-
-
-def bullets(text, limit):
-    """문장·줄 단위로 끊어 개조식 항목으로(최대 limit개)."""
-    out = []
-    for line in text.splitlines():
-        # '있습니다. ' 같은 문장 끝에서만 끊는다. '다. 성능 요구사항' 같은 항목 기호는 끊지 않는다
-        for s in re.split(r"(?<=[가-힣][다요음함])\.\s+", line.strip()):
-            s = s.strip().rstrip(".").strip()
-            if s:
-                out.append(re.sub(r"^[-·•]\s*", "", s))
-    return out[:limit]
 
 
 def clip(text, limit):
@@ -317,21 +277,36 @@ def title(f):
 
 
 def memo_lines(f):
-    """짧은 메모: 제목 + 문제·수정·근거 각 한 줄. 지적한 문구는 형광펜으로 보이므로 다시 싣지 않는다."""
-    lines = [f"[{LABEL[f['판정']]}] {title(f)}"]
-    probs = [s for s in bullets(f["문제점"], 2) if WS.sub("", s) != WS.sub("", title(f))]
-    if probs:
-        lines.append("문제: " + clip(" ".join(probs), 80))
-    lines.append(("확인: " if f["판정"] == "확인필요" else "수정: ") + clip(" ".join(bullets(f["수정안"], 3)), 100))
+    lines = [f"[{LABEL[f['판정']]}] {title(f)}",
+             "- 문제: " + clip(f["문제점"], 80),
+             ("- 확인: " if f["판정"] == "확인필요" else "- 수정: ") + clip(f["수정안"], 100)]
     basis = f["근거"].strip()
-    first = re.split(r"\s+/\s+", basis)[0]
-    lines.append("근거: " + ("문서 내용 대조" if basis == SELF else f'"{clip(first, 60)}"'))
+    if basis != SELF:
+        first = re.split(r"\s+/\s+", basis)[0]
+        lines.append(f'- 근거: "{clip(first, 60)}"')
     return lines
 
 
+def summary_lines(fixes, unplaced, checks):
+    n = {v: sum(1 for f, _ in fixes + unplaced if f["판정"] == v) for v in VERDICTS[:2]}
+    head = "[수정할 곳] " + ", ".join(f"{LABEL[v]} {c}건" for v, c in n.items())
+    if not fixes and not unplaced:
+        return ["[수정할 곳] 없음" + (f", 확인 요청 {checks}건(파란 메모)" if checks else "")]
+    lines = [f"- ({LABEL[f['판정']]}) {title(f)} {where} → {clip(f['수정안'], 60)}" for f, where in unplaced]
+    places = {}
+    for f, _ in fixes:
+        places.setdefault((f["판정"], title(f)), []).append(f)
+    groups = [f"- ({LABEL[v]}) {t}" + (f" ({len(fs)}곳)" if len(fs) > 1 else "") for (v, t), fs in places.items()]
+    room = SUMMARY_LINES - 1 - len(lines)
+    keep = len(groups) if len(groups) <= room else max(room - 1, 0)
+    lines += groups[:keep]
+    if keep < len(groups) and room > 0:
+        rest = sum(len(fs) for fs in list(places.values())[keep:])
+        lines.append(f"- 외 {rest}건: 본문 메모 참조")
+    return [head] + lines
+
+
 def memo_style(header):
-    """문서의 '메모' 스타일(한/글이 메모 글자에 쓰는 9pt 모양). (스타일 id, paraPr id, charPr id) 또는 None.
-    본문 글자(charPr 0)는 보통 10pt 이상이라 풍선이 커져 잘린다."""
     for tag in re.findall(r'<hh:style\b[^>]*>', header):
         if re.search(r'\bengName="Memo"', tag) or re.search(r'\bname="메모"', tag):
             got = [re.search(r'\b%s="(\d+)"' % k, tag) for k in ("id", "paraPrIDRef", "charPrIDRef")]
@@ -341,8 +316,6 @@ def memo_style(header):
 
 
 def add_memo_para_pr(header, base="0"):
-    """paraPr id=base를 복제해 왼쪽 정렬·줄간격 130%·어절 단위 줄바꿈으로 바꾼 문단 모양을 추가한다.
-    header 텍스트를 직접 고쳐 나머지 부분은 바이트 그대로 둔다. 실패하면 (원문, None)."""
     m_props = re.search(r'(<hh:paraProperties\b[^>]*\bitemCnt=")(\d+)("[^>]*>)', header)
     m_p0 = re.search(r'<hh:paraPr id="%s"[\s\S]*?</hh:paraPr>' % base, header)
     m_end = header.find("</hh:paraProperties>")
@@ -354,14 +327,12 @@ def add_memo_para_pr(header, base="0"):
     p = re.sub(r'(<hh:align\b[^>]*\bhorizontal=")\w+', r"\g<1>LEFT", p, count=1)
     p = re.sub(r'(<hh:lineSpacing type="PERCENT" value=")\d+', r"\g<1>130", p)
     p = p.replace('breakNonLatinWord="BREAK_WORD"', 'breakNonLatinWord="KEEP_WORD"')
-    out = header[:m_end] + p + header[m_end:]  # m_end가 itemCnt보다 뒤라 m_props 위치는 그대로다
+    out = header[:m_end] + p + header[m_end:]
     out = out[:m_props.start(2)] + str(int(m_props.group(2)) + 1) + out[m_props.end(2):]
     return out, new_id
 
 
 def add_memo_shapes(header):
-    """중요도별 메모 모양(hh:memoPr)을 header의 hh:memoProperties에 더한다(없으면 refList 끝에 만든다).
-    header 텍스트를 직접 고쳐 나머지는 바이트 그대로 둔다. (새 header, {판정: id}) 또는 (원문, {})."""
     ref_end = header.find("</hh:refList>")
     if ref_end < 0:
         return header, {}
@@ -393,7 +364,6 @@ def main():
         print("[중단] HWPX 파일만 메모를 달 수 있습니다. .hwp는 hancom.py convert로 먼저 변환하세요.")
         return 2
     findings, others = load_findings(a.findings, a.doc)
-    # 같은 범위에 지적이 겹치면 먼저 단 지적의 색이 남는다: 위급한 것부터 단다
     findings.sort(key=lambda f: VERDICTS.index(f["판정"]))
     if others and not findings:
         print(f"[중단] --doc '{a.doc}'의 지적이 없습니다. findings의 문서 값: {', '.join(sorted({f['문서'] for f in others}))}")
@@ -415,21 +385,19 @@ def annotate(a, findings, others, zin):
         return 2
 
     changed = {}
+    style_id, char_pr, para_pr, shapes = "0", "0", "0", {}
     if "Contents/header.xml" in zin.namelist():
         hdr = zin.read("Contents/header.xml").decode("utf-8")
         style = memo_style(hdr)
         if style:
-            MemoFactory.STYLE, MemoFactory.CHAR_PR = style[0], style[2]
+            style_id, char_pr = style[0], style[2]
         hdr, pid = add_memo_para_pr(hdr, style[1] if style else "0")
         if pid is not None:
-            MemoFactory.PARA_PR = pid
+            para_pr = pid
         hdr, shapes = add_memo_shapes(hdr)
-        if shapes:
-            MemoFactory.SHAPE = shapes
         if pid is not None or shapes:
             changed["Contents/header.xml"] = hdr.encode("utf-8")
 
-    # 섹션 파싱 (네임스페이스 접두어와 루트 선언을 보존한다)
     sections = []
     for name in sec_names:
         raw = zin.read(name).decode("utf-8")
@@ -439,10 +407,8 @@ def annotate(a, findings, others, zin):
         prolog, root_tag = raw[:m.start()], m.group(0)
         sections.append({"name": name, "root": ET.fromstring(raw), "prolog": prolog, "root_tag": root_tag})
 
-    # extract_text.py와 같은 순서로 문단 번호를 매긴다
     paras, n = [], 0
     fields = [fb for s in sections for fb in s["root"].iter(HP + "fieldBegin")]
-    # 기존 메모·머리말·꼬리말·각주 안 문단: 번호는 매기되 메모는 달지 않는다
     nested = fields + [el for s in sections for el in s["root"].iter()
                        if local(el.tag) in ("header", "footer", "footNote", "endNote")]
     in_memo = {id(q) for el in nested for q in el.iter(HP + "p")}
@@ -465,13 +431,12 @@ def annotate(a, findings, others, zin):
             para_obj[id(el)] = Para(el)
         return para_obj[id(el)]
 
-    factory = MemoFactory(a.author, max_z)
-    factory.used_ids = {fb.get("id") for fb in fields}
+    factory = MemoFactory(a.author, max_z, {fb.get("id") for fb in fields}, shapes, para_pr, style_id, char_pr)
     anchored, unanchored = [], []
-    records = []  # 번호 재정렬용 (문서 위치, fieldBegin)
+    records = []
 
     for f in findings:
-        if re.search(r"머리말|꼬리말|각주|미주", f["위치"]):  # 메모를 달 수 없는 영역: 본문의 같은 문구에 잘못 달지 않는다
+        if re.search(r"머리말|꼬리말|각주|미주", f["위치"]):
             unanchored.append(f)
             continue
         hints = para_hint(f)
@@ -490,14 +455,13 @@ def annotate(a, findings, others, zin):
         s, e = P.fit(s, e)
         lines = memo_lines(f)
         prev = P.overlapping(s, e)
-        if prev:  # 같은 범위에 이미 메모가 있으면 내용을 이어 붙인다
-            MemoFactory.add_lines(prev[2], ["", MEMO_SEP] + lines)
+        if prev:
+            factory.add_lines(prev[2], ["", MEMO_SEP] + lines)
         else:
             begin, end, sl = factory.make(lines, f["판정"])
             records.append(((num, s), begin[0]))
             color = HIGHLIGHT[f["판정"]]
             P.inserts += [(s, 0, 0, ("ctrl", begin, None)), (e - 1, 1, 9, ("ctrl", end, None))]
-            # 형광펜: run마다 따로 열고 닫는다
             runs_hit = {}
             for gi in range(s, e):
                 ri, _ = P.chars[gi]
@@ -508,27 +472,12 @@ def annotate(a, findings, others, zin):
             P.ranges.append((s, e, sl))
         anchored.append((f, num))
 
-    # 검토 요약 메모: 첫 문단 앞부분에 단다
     every = [f for f, _ in anchored] + unanchored + others
     count = {v: sum(1 for f in every if f["판정"] == v) for v in VERDICTS}
-    head = ", ".join(f"{LABEL[v]} {n}건" for v, n in count.items() if n) or "지적 0건"
-    head += "입니다."
-    if len(every) > len(anchored):
-        head += f" 이 중 {len(every) - len(anchored)}건은 본문 위치에 표시하지 않고 아래에 따로 적었습니다."
-    # 요약 메모는 짧게 둔다. 길면 한/글이 풍선을 잘라 보여 준다. 본문에 단 지적은 각 메모에 있으므로
-    # 제목을 다시 나열하지 않고, 본문에 못 단 지적과 다른 문서의 지적만 싣는다.
-    summary = ["[검토 요약] AI 1차 검토입니다. 최종 판단은 담당자가 합니다.", head,
-               "노란 형광펜은 고친 뒤, 하늘색은 확인해 메모에 답한 뒤 메모를 지워 주세요."]
-    if unanchored:
-        summary += ["", f"■ 본문에 표시하지 못한 지적 {len(unanchored)}건"]
-        for f in unanchored:
-            lines = memo_lines(f)
-            summary += [f" ({f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
-    if others:
-        summary += ["", f"■ 다른 문서의 지적 {len(others)}건 (해당 문서에서 고쳐 주세요)"]
-        for f in others:
-            lines = memo_lines(f)
-            summary += [f" ({f['문서']} {f['위치']}) {lines[0]}"] + [" " + x for x in lines[1:]]
+    fixes = sorted(((f, num) for f, num in anchored if f["판정"] != "확인필요"),
+                   key=lambda x: (VERDICTS.index(x[0]["판정"]), x[1]))
+    unplaced = [(f, f["위치"]) for f in unanchored] + [(f, f"{f['문서']} {f['위치']}") for f in others]
+    summary = summary_lines(fixes, unplaced, count["확인필요"])
     if paras:
         P = get_para(paras[0][2])
         body = P.text.rstrip()
@@ -538,13 +487,12 @@ def annotate(a, findings, others, zin):
             k = min(starts)
         s0, k = P.fit(0, k)
         overlap = P.overlapping(s0, k)
-        if overlap:  # 첫 글자부터 지적 메모가 있으면 그 메모 앞쪽에 요약을 넣는다
+        if overlap:
             first = list(overlap[2])
             for c in first:
                 overlap[2].remove(c)
-            MemoFactory.add_lines(overlap[2], summary + ["", MEMO_SEP])
-            for c in first:
-                overlap[2].append(c)
+            factory.add_lines(overlap[2], summary + ["", MEMO_SEP])
+            overlap[2].extend(first)
         else:
             begin, end, sl = factory.make(summary, "요약")
             records.append(((0, -1), begin[0]))
@@ -555,7 +503,6 @@ def annotate(a, findings, others, zin):
     for P in para_obj.values():
         P.rebuild()
 
-    # 섹션은 다시 직렬화하고, 나머지 엔트리는 원본 순서·압축방식 그대로 복사한다
     for s in sections:
         body = ET.tostring(s["root"], encoding="unicode")
         body = s["root_tag"] + body[body.index(">") + 1:]
@@ -583,7 +530,6 @@ def annotate(a, findings, others, zin):
     print("합계: " + ", ".join(f"{v} {n}건" for v, n in count.items()))
     if scripts:
         print(f"문서 스크립트 {len(scripts)}개를 검토본에서 뺐습니다.")
-    # 위치를 못 찾은 것을 먼저, 정상 메모는 20건까지만(하네스 출력 잘림 방지)
     for f in unanchored:
         print(f"- [요약 메모로] {f['id']} {title(f)}")
     for f, num in anchored[:20]:
@@ -594,7 +540,7 @@ def annotate(a, findings, others, zin):
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")  # 하네스가 파이프로 읽어도 UTF-8로 나가게
+    sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())
 

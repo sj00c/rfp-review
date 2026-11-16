@@ -5,7 +5,6 @@ import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extract_text import READERS, sha256
 
 LIB = os.path.abspath(os.path.expanduser(os.environ.get("RFP_GUIDES") or "~/rfp-guides"))

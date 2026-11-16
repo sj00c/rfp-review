@@ -9,6 +9,7 @@ VERDICTS = ("필수수정", "수정필요", "확인필요")
 WS = re.compile(r"\s+")
 TAG = re.compile(r"^\s*\[[^\]]*\]\s*")
 OBJECT = re.compile(r"\[(수식|그림|개체)")
+PROSE_END = re.compile(r"(다|세요|[어아해예]요)\W*$")
 
 
 def nows(s):
@@ -21,7 +22,6 @@ def load_lines(path):
 
 
 def found(quote, lines):
-    """quote가 한 줄 안에 있으면 True. '…'/'...'로 생략한 인용은 조각이 순서대로 있어야 한다."""
     parts = [nows(x) for x in re.split(r"…|\.{3,}", quote)]
     parts = [x for x in parts if x]
     if not parts:
@@ -43,7 +43,6 @@ def found(quote, lines):
 
 
 def check(findings, guide, docs):
-    """findings: [(파일, finding)], guide: 지침 줄 목록, docs: {문서명: 줄 목록}. 오류 목록을 돌려준다."""
     errors, seen = [], set()
     for path, f in findings:
         fid = f.get("id")
@@ -57,8 +56,12 @@ def check(findings, guide, docs):
         if v not in VERDICTS:
             errors.append(f"{label}: 판정 '{v}' — 필수수정/수정필요/확인필요만 기록합니다(문제없는 항목은 쓰지 않음)")
         for field in ("위치", "요약", "문제점", "수정안"):
-            if not str(f.get(field) or "").strip():
+            text = str(f.get(field) or "").strip()
+            if not text:
                 errors.append(f"{label}: {field}이(가) 비어 있습니다")
+            elif field in ("문제점", "수정안") and PROSE_END.search(text) and text[-1] not in "'\"’”」』":
+                errors.append(f"{label}: {field}이(가) 서술식입니다 → "
+                              f"\"{text[-20:]}\" (개조식: '~함', '~필요', '~로 변경'처럼 명사형으로 끝냄)")
         doc = f.get("문서")
         if doc not in docs:
             errors.append(f"{label}: 문서 '{doc}'은(는) --doc으로 준 문서가 아닙니다({', '.join(docs)})")
@@ -83,7 +86,6 @@ ITEM_VERDICTS = ("위반", "확인필요", "적합", "해당없음")
 
 
 def check_items(items, findings, docs):
-    """items.json: 모든 항목에 판정이 있고, 위반·확인필요는 실제 지적을, 적합은 문서에 있는 인용을 가져야 한다."""
     errors, blank = [], 0
     ids = {f.get("id") for _, f in findings}
     lines = [ln for d in docs.values() for ln in d]

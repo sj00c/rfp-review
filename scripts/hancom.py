@@ -27,7 +27,6 @@ REASON = {3: "한/글이 파일을 열지 못했습니다(암호·손상·배포
 
 
 def register_security_module():
-    """보안 확인 창을 없애는 승인 모듈을 HKCU에 등록한다. 이미 등록됐거나 DLL이 없으면 그대로 둔다."""
     import winreg
     key_path = r"Software\HNC\HwpAutomation\Modules"
     try:
@@ -36,7 +35,7 @@ def register_security_module():
                 return True
     except OSError:
         pass
-    spec = importlib.util.find_spec("pyhwpx")  # 설치돼 있으면 그 DLL만 빌린다(import·설치 불필요)
+    spec = importlib.util.find_spec("pyhwpx")
     dll = os.path.join(os.path.dirname(spec.origin), MODULE + ".dll") if spec and spec.origin else ""
     if not os.path.isfile(dll):
         return False
@@ -46,7 +45,6 @@ def register_security_module():
 
 
 def run(src, dst, timeout):
-    """한/글로 src를 연다. dst가 있으면 HWPX로 저장한다. 쪽수를 돌려준다."""
     if os.name != "nt":
         raise RuntimeError("Windows가 아니라 한/글을 쓸 수 없습니다.")
     if not os.path.isfile(src):

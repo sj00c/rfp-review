@@ -1,7 +1,4 @@
 #!/bin/bash
-# 평가 실행: evals/run.sh <모델> <샘플> <회차>
-# evals/data/<샘플>/ 에 제안요청서.hwpx, 체크리스트.xlsx, answers.json 이 있어야 한다.
-# 결과는 evals/runs/<샘플>-<모델>-<회차>/ 에 남는다(작업 폴더 포함).
 set -u
 m=$1 s=$2 r=$3
 E=$(cd "$(dirname "$0")" && pwd)
